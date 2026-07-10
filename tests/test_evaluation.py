@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 
 from src.data import load_dataset
-from src.evaluation import build_table4_breakdown, evaluate_records, load_results_jsonl, write_results_jsonl
+from src.evaluation import build_table4_breakdown, evaluate_records, load_results_jsonl, select_records, write_results_jsonl
 from src.models import ConvFinQARecord
 from src.prompts import ChatTurn
 
@@ -65,6 +65,44 @@ class BaselineEvaluationTests(unittest.TestCase):
         )
 
         self.assertEqual(seen_history_lengths, [0, 1, 2])
+
+    def test_evaluate_records_keeps_context_isolated_per_record(self) -> None:
+        dataset = load_dataset()
+        records = dataset.train[:2]
+        seen_calls: list[tuple[str, int]] = []
+
+        def answer_fn(
+            record: ConvFinQARecord,
+            history: list[ChatTurn],
+            _question: str,
+        ) -> str:
+            seen_calls.append((record.id, len(history)))
+            return record.dialogue.conv_answers[0]
+
+        evaluate_records(
+            records=records,
+            answer_fn=answer_fn,
+            max_records=2,
+            max_turns_per_record=1,
+        )
+
+        self.assertEqual(seen_calls, [(records[0].id, 0), (records[1].id, 0)])
+
+    def test_select_records_defaults_to_file_order(self) -> None:
+        dataset = load_dataset()
+
+        selected = select_records(dataset.train, max_records=3)
+
+        self.assertEqual([record.id for record in selected], [record.id for record in dataset.train[:3]])
+
+    def test_select_records_random_seed_is_reproducible(self) -> None:
+        dataset = load_dataset()
+
+        first_sample = select_records(dataset.train, max_records=5, random_seed=42)
+        second_sample = select_records(dataset.train, max_records=5, random_seed=42)
+
+        self.assertEqual([record.id for record in first_sample], [record.id for record in second_sample])
+        self.assertNotEqual([record.id for record in first_sample], [record.id for record in dataset.train[:5]])
 
     def test_write_results_jsonl_saves_raw_and_normalized_answers(self) -> None:
         dataset = load_dataset()

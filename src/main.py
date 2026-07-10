@@ -12,7 +12,13 @@ from openai.types.chat import ChatCompletionMessageParam
 from rich import print as rich_print
 
 from src.data import find_record, load_dataset
-from src.evaluation import build_table4_breakdown, evaluate_records, load_results_jsonl, write_results_jsonl
+from src.evaluation import (
+    build_table4_breakdown,
+    evaluate_records,
+    load_results_jsonl,
+    select_records,
+    write_results_jsonl,
+)
 from src.models import ConvFinQARecord
 from src.prompts import ChatTurn, build_chat_messages
 
@@ -84,6 +90,7 @@ def chat(
 def eval_baseline(
     max_records: int = typer.Option(3, help="Number of dev records to evaluate."),
     max_turns: Optional[int] = typer.Option(None, help="Optional maximum turns per record."),
+    random_seed: Optional[int] = typer.Option(None, help="Random seed for reproducible record sampling."),
     model: str = typer.Option("gpt-4o", help="OpenAI model to use."),
     output_path: Optional[Path] = typer.Option(None, help="Optional JSONL path for turn-level results."),
 ) -> None:
@@ -114,7 +121,7 @@ def eval_baseline(
 
     try:
         summary = evaluate_records(
-            records=dataset.dev,
+            records=select_records(dataset.dev, max_records=max_records, random_seed=random_seed),
             answer_fn=answer_question,
             max_records=max_records,
             max_turns_per_record=max_turns,

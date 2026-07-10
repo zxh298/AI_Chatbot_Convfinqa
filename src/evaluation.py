@@ -8,6 +8,7 @@ the same normalization used by the chat prototype.
 from __future__ import annotations
 
 import json
+import random
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -122,6 +123,19 @@ def evaluate_records(
         accuracy=accuracy,
         results=results,
     )
+
+
+def select_records(
+    records: Sequence[ConvFinQARecord],
+    max_records: int,
+    random_seed: int | None = None,
+) -> list[ConvFinQARecord]:
+    """Select records in file order or by reproducible random sample."""
+    selected_records = list(records)
+    if random_seed is not None:
+        rng = random.Random(random_seed)
+        rng.shuffle(selected_records)
+    return selected_records[:max_records]
 
 
 def write_results_jsonl(summary: BaselineEvaluationSummary, output_path: Path) -> None:
