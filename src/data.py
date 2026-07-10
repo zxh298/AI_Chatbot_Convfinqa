@@ -1,4 +1,8 @@
-"""Dataset loading helpers for ConvFinQA."""
+"""Dataset loading helpers for ConvFinQA.
+
+The cleaned dataset is part of the repository, so the default path is kept in
+code rather than hidden in environment configuration.
+"""
 
 from __future__ import annotations
 
@@ -25,6 +29,8 @@ def load_dataset(path: Path = DEFAULT_DATASET_PATH) -> ConvFinQADataset:
     with path.open() as file:
         raw_data = json.load(file)
 
+    # Pydantic validates the dataset boundary once, so the rest of the app can
+    # work with typed records instead of raw dictionaries.
     return ConvFinQADataset.model_validate(raw_data)
 
 

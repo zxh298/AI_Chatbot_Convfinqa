@@ -1,4 +1,9 @@
-"""Answer formatting and normalization helpers."""
+"""Answer formatting and normalization helpers.
+
+The dataset has two answer views: `conv_answers` are human-facing strings,
+while `executed_answers` are raw program outputs. These helpers keep chat UX
+natural while making later evaluation numeric and tolerant of display formats.
+"""
 
 from __future__ import annotations
 
@@ -37,6 +42,7 @@ def parse_answer_text(answer: str) -> NormalizedAnswer:
     value = float(match.group().replace(",", ""))
     is_percent = "%" in normalized_text
     if is_percent:
+        # Store percentages on the same scale as ConvFinQA executed answers.
         value = value / 100
 
     return NormalizedAnswer(raw=answer, value=value, is_numeric=True, is_percent=is_percent)
@@ -50,9 +56,12 @@ def normalize_gold_answer(executed_answer: AnswerValue, conv_answer: str) -> Nor
     """
     parsed_conv_answer = parse_answer_text(conv_answer)
     if parsed_conv_answer.is_numeric:
+        # Prefer display answer scale: "-3.3%" should compare as -0.033.
         return parsed_conv_answer
 
     if isinstance(executed_answer, (float, int)):
+        # Some answers are not display-formatted, so the raw execution result is
+        # the best comparable value.
         return NormalizedAnswer(
             raw=str(executed_answer),
             value=float(executed_answer),
@@ -87,6 +96,7 @@ def answers_match(
 
 
 def _normalize_text(text: str) -> str:
+    """Normalize common model wording before numeric parsing."""
     return (
         text.strip()
         .lower()

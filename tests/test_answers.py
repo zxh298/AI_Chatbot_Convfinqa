@@ -1,0 +1,45 @@
+"""Tests for answer normalization and comparison."""
+
+# ruff: noqa: D102
+
+from __future__ import annotations
+
+import unittest
+
+from src.answers import answers_match, normalize_gold_answer, parse_answer_text
+
+
+class AnswerNormalizationTests(unittest.TestCase):
+    def test_percent_text_is_normalized_to_ratio(self) -> None:
+        parsed = parse_answer_text("-3.3%")
+
+        self.assertTrue(parsed.is_numeric)
+        self.assertTrue(parsed.is_percent)
+        self.assertAlmostEqual(parsed.value, -0.033)
+
+    def test_negative_word_percent_is_normalized_to_ratio(self) -> None:
+        parsed = parse_answer_text("negative 3.3%")
+
+        self.assertTrue(parsed.is_numeric)
+        self.assertTrue(parsed.is_percent)
+        self.assertAlmostEqual(parsed.value, -0.033)
+
+    def test_gold_percent_prefers_display_answer_scale(self) -> None:
+        normalized = normalize_gold_answer(-0.03264, "-3.3%")
+
+        self.assertTrue(normalized.is_numeric)
+        self.assertTrue(normalized.is_percent)
+        self.assertAlmostEqual(normalized.value, -0.033)
+
+    def test_percent_prediction_matches_executed_ratio_gold(self) -> None:
+        self.assertTrue(answers_match("negative 3.3%", -0.03264, "-3.3%"))
+
+    def test_plain_number_prediction_matches_plain_gold(self) -> None:
+        self.assertTrue(answers_match("25,587", 25587.0, "25587"))
+
+    def test_wrong_percent_prediction_does_not_match(self) -> None:
+        self.assertFalse(answers_match("-4.3%", -0.03264, "-3.3%"))
+
+
+if __name__ == "__main__":
+    unittest.main()

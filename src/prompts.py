@@ -1,4 +1,8 @@
-"""Prompt construction for the record-aware chat."""
+"""Prompt construction for the record-aware chat.
+
+The prompt stays intentionally direct: provide the selected record, preserve
+chat history, and ask for concise calculations when needed.
+"""
 
 from __future__ import annotations
 
@@ -40,6 +44,8 @@ def build_chat_messages(
     """Build OpenAI chat messages with record context and prior turns."""
     messages = [{"role": "system", "content": build_system_prompt(record)}]
 
+    # Preserve previous turns as actual chat messages instead of flattening them
+    # into the prompt, which better matches how users experience follow-ups.
     for turn in history:
         messages.append({"role": "user", "content": turn.user})
         messages.append({"role": "assistant", "content": turn.assistant})

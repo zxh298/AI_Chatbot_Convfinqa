@@ -11,7 +11,7 @@ from src.formatting import format_record_context, format_table
 from src.prompts import ChatTurn, build_chat_messages, build_system_prompt
 
 
-class Stage1Tests(unittest.TestCase):
+class RecordContextTests(unittest.TestCase):
     def test_dataset_loads_and_validates_records(self) -> None:
         dataset = load_dataset()
 

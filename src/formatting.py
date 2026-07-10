@@ -1,4 +1,8 @@
-"""Formatting helpers for financial record context."""
+"""Formatting helpers for financial record context.
+
+ConvFinQA tables are column-oriented dictionaries. The prompt is easier for an
+LLM to read when that structure is converted into a compact Markdown table.
+"""
 
 from __future__ import annotations
 
@@ -36,6 +40,7 @@ def format_record_context(record: ConvFinQARecord) -> str:
 
 
 def _ordered_row_labels(table: dict[str, dict[str, TableValue]]) -> list[str]:
+    """Recover row order from the first appearance across table columns."""
     row_labels: list[str] = []
     seen: set[str] = set()
     for column_values in table.values():
@@ -47,11 +52,13 @@ def _ordered_row_labels(table: dict[str, dict[str, TableValue]]) -> list[str]:
 
 
 def _format_value(value: TableValue | str) -> str:
+    """Keep numbers compact while preserving non-numeric table cells."""
     if isinstance(value, float):
         return f"{value:g}"
     return str(value)
 
 
 def _format_markdown_row(values: list[str]) -> str:
+    """Escape pipes so table values cannot break Markdown columns."""
     escaped_values = [value.replace("|", "\\|") for value in values]
     return "| " + " | ".join(escaped_values) + " |"
