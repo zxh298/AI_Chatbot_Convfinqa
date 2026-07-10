@@ -39,6 +39,11 @@ class AnswerNormalizationTests(unittest.TestCase):
 
         self.assertTrue(answers_match(prediction, -0.03264, "-3.3%"))
 
+    def test_strict_final_answer_value_ignores_explanation_line(self) -> None:
+        prediction = "Final answer: 3\nCalculation: 11 - 8 = 3 million."
+
+        self.assertTrue(answers_match(prediction, 3.0, "3"))
+
     def test_fallback_uses_last_number_when_no_final_answer_line(self) -> None:
         prediction = "Calculation: (326 - 337) / 337 = -0.03264, or -3.3%."
 

@@ -75,6 +75,15 @@ class RecordContextTests(unittest.TestCase):
         self.assertEqual(messages[2], {"role": "assistant", "content": "206588"})
         self.assertEqual(messages[3], {"role": "user", "content": "what about 2008?"})
 
+    def test_prompt_requires_comparable_final_answer_value(self) -> None:
+        dataset = load_dataset()
+        prompt = build_system_prompt(dataset.train[0]).lower()
+
+        self.assertIn("only the final comparable answer", prompt)
+        self.assertIn("without units, dates, or explanation", prompt)
+        self.assertIn("calculation:", prompt)
+        self.assertIn("use 3 instead of $3 million", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()
