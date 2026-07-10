@@ -70,6 +70,7 @@ class RecordContextTests(unittest.TestCase):
         self.assertEqual(messages[0]["role"], "system")
         self.assertIn(record.id, messages[0]["content"])
         self.assertIn("using only the selected convfinqa record", build_system_prompt(record).lower())
+        self.assertIn("final answer:", build_system_prompt(record).lower())
         self.assertEqual(messages[1], {"role": "user", "content": "what is net cash in 2009?"})
         self.assertEqual(messages[2], {"role": "assistant", "content": "206588"})
         self.assertEqual(messages[3], {"role": "user", "content": "what about 2008?"})

@@ -15,6 +15,10 @@ from pydantic import BaseModel, ConfigDict
 
 AnswerValue = Union[float, int, str]
 _NUMBER_PATTERN = re.compile(r"[-+]?\d[\d,]*(?:\.\d+)?")
+_FINAL_ANSWER_PATTERN = re.compile(
+    r"final\s+answer\s*:\s*(?P<answer>[^\n\r]+)",
+    flags=re.IGNORECASE,
+)
 
 
 class NormalizedAnswer(BaseModel):
@@ -34,10 +38,12 @@ class NormalizedAnswer(BaseModel):
 
 def parse_answer_text(answer: str) -> NormalizedAnswer:
     """Parse an answer string into a comparable value when possible."""
-    normalized_text = _normalize_text(answer)
-    match = _NUMBER_PATTERN.search(normalized_text)
+    answer_text = _extract_final_answer(answer)
+    normalized_text = _normalize_text(answer_text)
+    matches = list(_NUMBER_PATTERN.finditer(normalized_text))
+    match = matches[-1] if matches else None
     if match is None:
-        return NormalizedAnswer(raw=answer, value=normalized_text, is_numeric=False)
+        return NormalizedAnswer(raw=answer_text, value=normalized_text, is_numeric=False)
 
     value = float(match.group().replace(",", ""))
     is_percent = "%" in normalized_text
@@ -45,7 +51,7 @@ def parse_answer_text(answer: str) -> NormalizedAnswer:
         # Store percentages on the same scale as ConvFinQA executed answers.
         value = value / 100
 
-    return NormalizedAnswer(raw=answer, value=value, is_numeric=True, is_percent=is_percent)
+    return NormalizedAnswer(raw=answer_text, value=value, is_numeric=True, is_percent=is_percent)
 
 
 def normalize_gold_answer(executed_answer: AnswerValue, conv_answer: str) -> NormalizedAnswer:
@@ -105,3 +111,11 @@ def _normalize_text(text: str) -> str:
         .replace("positive", "")
         .replace("−", "-")
     )
+
+
+def _extract_final_answer(text: str) -> str:
+    """Prefer an explicit final-answer line when the model provides one."""
+    match = _FINAL_ANSWER_PATTERN.search(text)
+    if match is None:
+        return text
+    return match.group("answer").strip()

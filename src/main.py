@@ -134,12 +134,5 @@ def eval_baseline(
         )
 
 
-@app.command()
-def myfunc() -> None:
-    """My hello world function"""
-    # TODO: YOUR CODE HERE
-    rich_print("Hello World")
-
-
 if __name__ == "__main__":
     app()

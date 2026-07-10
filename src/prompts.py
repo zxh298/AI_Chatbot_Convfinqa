@@ -29,6 +29,7 @@ def build_system_prompt(record: ConvFinQARecord) -> str:
             "Answer the user's questions using only the selected ConvFinQA record below.",
             "Use the conversation history when it is relevant to the current question.",
             "For numerical answers, include a brief calculation when arithmetic is needed.",
+            "Start every response with `Final answer: <answer>`.",
             "Format the final answer naturally for the question. If the question asks for a percentage, return a percentage such as -3.3%, not the raw decimal ratio such as -0.03264.",
             "If the answer is not supported by the record, say that the record does not provide enough information.",
             format_record_context(record),
