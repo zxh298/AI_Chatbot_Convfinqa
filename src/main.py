@@ -2,6 +2,7 @@
 
 import os
 import sys
+from pathlib import Path
 from typing import Optional, cast
 
 import typer
@@ -11,7 +12,7 @@ from openai.types.chat import ChatCompletionMessageParam
 from rich import print as rich_print
 
 from src.data import find_record, load_dataset
-from src.evaluation import evaluate_records
+from src.evaluation import evaluate_records, write_results_jsonl
 from src.models import ConvFinQARecord
 from src.prompts import ChatTurn, build_chat_messages
 
@@ -84,6 +85,7 @@ def eval_baseline(
     max_records: int = typer.Option(3, help="Number of dev records to evaluate."),
     max_turns: Optional[int] = typer.Option(3, help="Maximum turns per record."),
     model: str = typer.Option("gpt-4o", help="OpenAI model to use."),
+    output_path: Optional[Path] = typer.Option(None, help="Optional JSONL path for turn-level results."),
 ) -> None:
     """Run a small dev-set baseline evaluation."""
     api_key = os.getenv("OPENAI_API_KEY")
@@ -126,6 +128,10 @@ def eval_baseline(
         f"{summary.correct_turns}/{summary.total_turns} "
         f"({summary.accuracy:.1%})",
     )
+    if output_path is not None:
+        write_results_jsonl(summary, output_path)
+        rich_print(f"[green]Saved turn-level results to:[/green] {output_path}")
+
     for result in summary.results:
         status = "PASS" if result.is_correct else "FAIL"
         rich_print(

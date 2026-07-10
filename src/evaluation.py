@@ -7,11 +7,13 @@ the same normalization used by the chat prototype.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Sequence
+from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from src.answers import answers_match
+from src.answers import answers_match, normalize_gold_answer, parse_answer_text
 from src.models import ConvFinQARecord
 from src.prompts import ChatTurn
 
@@ -28,8 +30,12 @@ class TurnEvaluationResult(BaseModel):
     turn_index: int
     question: str
     prediction: str
+    prediction_value: float | str
+    prediction_is_percent: bool
     gold_conv_answer: str
     gold_executed_answer: float | int | str
+    gold_value: float | str
+    gold_is_percent: bool
     is_correct: bool
 
 
@@ -65,6 +71,11 @@ def evaluate_records(
             prediction = answer_fn(record, history, question)
             gold_conv_answer = record.dialogue.conv_answers[turn_index]
             gold_executed_answer = record.dialogue.executed_answers[turn_index]
+            parsed_prediction = parse_answer_text(prediction)
+            normalized_gold = normalize_gold_answer(
+                executed_answer=gold_executed_answer,
+                conv_answer=gold_conv_answer,
+            )
             # Compare against both gold fields because display format and raw
             # execution scale differ for many percentage answers.
             is_correct = answers_match(
@@ -79,8 +90,12 @@ def evaluate_records(
                     turn_index=turn_index,
                     question=question,
                     prediction=prediction,
+                    prediction_value=parsed_prediction.value,
+                    prediction_is_percent=parsed_prediction.is_percent,
                     gold_conv_answer=gold_conv_answer,
                     gold_executed_answer=gold_executed_answer,
+                    gold_value=normalized_gold.value,
+                    gold_is_percent=normalized_gold.is_percent,
                     is_correct=is_correct,
                 ),
             )
@@ -96,6 +111,14 @@ def evaluate_records(
         accuracy=accuracy,
         results=results,
     )
+
+
+def write_results_jsonl(summary: BaselineEvaluationSummary, output_path: Path) -> None:
+    """Write turn-level evaluation results as JSONL for later analysis."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w") as file:
+        for result in summary.results:
+            file.write(json.dumps(result.model_dump()) + "\n")
 
 
 def _aligned_turn_count(record: ConvFinQARecord) -> int:
