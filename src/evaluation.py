@@ -14,7 +14,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from src.answers import answers_match, normalize_gold_answer, parse_answer_text
-from src.models import ConvFinQARecord
+from src.models import ConvFinQADataset, ConvFinQARecord
 from src.prompts import ChatTurn
 
 AnswerFn = Callable[[ConvFinQARecord, list[ChatTurn], str], str]
@@ -48,6 +48,17 @@ class BaselineEvaluationSummary(BaseModel):
     correct_turns: int
     accuracy: float
     results: list[TurnEvaluationResult]
+
+
+class BreakdownRow(BaseModel):
+    """Accuracy row for one evaluation slice."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str
+    correct_turns: int
+    total_turns: int
+    accuracy: float
 
 
 def evaluate_records(
@@ -121,6 +132,62 @@ def write_results_jsonl(summary: BaselineEvaluationSummary, output_path: Path) -
             file.write(json.dumps(result.model_dump()) + "\n")
 
 
+def load_results_jsonl(results_path: Path) -> list[TurnEvaluationResult]:
+    """Load saved turn-level evaluation results."""
+    return [
+        TurnEvaluationResult.model_validate_json(line)
+        for line in results_path.read_text().splitlines()
+        if line.strip()
+    ]
+
+
+def build_table4_breakdown(
+    results: Sequence[TurnEvaluationResult],
+    dataset: ConvFinQADataset,
+) -> list[BreakdownRow]:
+    """Build Table 4-style breakdowns without rerunning the model."""
+    records_by_id = {record.id: record for record in [*dataset.train, *dataset.dev]}
+    groups: dict[str, list[TurnEvaluationResult]] = {
+        "full results": list(results),
+        "Number selection questions": [],
+        "Program questions": [],
+        "Simple conversations": [],
+        "Hybrid conversations": [],
+        "Hybrid conversations (first part)": [],
+        "Hybrid conversations (second part)": [],
+    }
+    turn_groups: dict[int, list[TurnEvaluationResult]] = {}
+
+    for result in results:
+        record = records_by_id.get(result.record_id)
+        if record is None:
+            continue
+
+        program = record.dialogue.turn_program[result.turn_index]
+        if _is_number_selection_program(program):
+            groups["Number selection questions"].append(result)
+        else:
+            groups["Program questions"].append(result)
+
+        if record.features.has_type2_question:
+            groups["Hybrid conversations"].append(result)
+            if record.dialogue.qa_split[result.turn_index]:
+                groups["Hybrid conversations (second part)"].append(result)
+            else:
+                groups["Hybrid conversations (first part)"].append(result)
+        else:
+            groups["Simple conversations"].append(result)
+
+        turn_groups.setdefault(result.turn_index, []).append(result)
+
+    rows = [_make_breakdown_row(label, label_results) for label, label_results in groups.items()]
+    rows.extend(
+        _make_breakdown_row(f"Turn {turn_index}", turn_results)
+        for turn_index, turn_results in sorted(turn_groups.items())
+    )
+    return rows
+
+
 def _aligned_turn_count(record: ConvFinQARecord) -> int:
     """Use only turns with every gold field present.
 
@@ -131,4 +198,22 @@ def _aligned_turn_count(record: ConvFinQARecord) -> int:
         len(record.dialogue.conv_questions),
         len(record.dialogue.conv_answers),
         len(record.dialogue.executed_answers),
+    )
+
+
+def _is_number_selection_program(program: str) -> bool:
+    """A turn is number selection when its gold program is already a value."""
+    return "(" not in program and ")" not in program
+
+
+def _make_breakdown_row(label: str, results: Sequence[TurnEvaluationResult]) -> BreakdownRow:
+    """Summarize one group of turn-level results."""
+    correct_turns = sum(result.is_correct for result in results)
+    total_turns = len(results)
+    accuracy = correct_turns / total_turns if total_turns else 0.0
+    return BreakdownRow(
+        label=label,
+        correct_turns=correct_turns,
+        total_turns=total_turns,
+        accuracy=accuracy,
     )

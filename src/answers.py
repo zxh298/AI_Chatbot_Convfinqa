@@ -14,7 +14,7 @@ from typing import Union
 from pydantic import BaseModel, ConfigDict
 
 AnswerValue = Union[float, int, str]
-_NUMBER_PATTERN = re.compile(r"[-+]?\d[\d,]*(?:\.\d+)?")
+_NUMBER_PATTERN = re.compile(r"[-+]?(?:\d[\d,]*(?:\.\d+)?|\.\d+)")
 _FINAL_ANSWER_PATTERN = re.compile(
     r"final\s+answer\s*:\s*(?P<answer>[^\n\r]+)",
     flags=re.IGNORECASE,

@@ -52,6 +52,18 @@ class AnswerNormalizationTests(unittest.TestCase):
     def test_plain_number_prediction_matches_plain_gold(self) -> None:
         self.assertTrue(answers_match("25,587", 25587.0, "25587"))
 
+    def test_leading_decimal_gold_answer_is_parsed_as_decimal(self) -> None:
+        normalized = normalize_gold_answer(0.0751, ".0751")
+
+        self.assertTrue(normalized.is_numeric)
+        self.assertAlmostEqual(normalized.value, 0.0751)
+
+    def test_negative_leading_decimal_prediction_is_parsed_as_decimal(self) -> None:
+        parsed = parse_answer_text("Final answer: -.0751")
+
+        self.assertTrue(parsed.is_numeric)
+        self.assertAlmostEqual(parsed.value, -0.0751)
+
     def test_wrong_percent_prediction_does_not_match(self) -> None:
         self.assertFalse(answers_match("-4.3%", -0.03264, "-3.3%"))
 

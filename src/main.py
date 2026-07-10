@@ -12,7 +12,7 @@ from openai.types.chat import ChatCompletionMessageParam
 from rich import print as rich_print
 
 from src.data import find_record, load_dataset
-from src.evaluation import evaluate_records, write_results_jsonl
+from src.evaluation import build_table4_breakdown, evaluate_records, load_results_jsonl, write_results_jsonl
 from src.models import ConvFinQARecord
 from src.prompts import ChatTurn, build_chat_messages
 
@@ -83,7 +83,7 @@ def chat(
 @app.command()
 def eval_baseline(
     max_records: int = typer.Option(3, help="Number of dev records to evaluate."),
-    max_turns: Optional[int] = typer.Option(3, help="Maximum turns per record."),
+    max_turns: Optional[int] = typer.Option(None, help="Optional maximum turns per record."),
     model: str = typer.Option("gpt-4o", help="OpenAI model to use."),
     output_path: Optional[Path] = typer.Option(None, help="Optional JSONL path for turn-level results."),
 ) -> None:
@@ -137,6 +137,24 @@ def eval_baseline(
         rich_print(
             f"{status} {result.record_id} turn {result.turn_index + 1}: "
             f"pred={result.prediction!r} gold={result.gold_conv_answer!r}",
+        )
+
+
+@app.command()
+def analyze_results(
+    results_path: Path = typer.Argument(..., help="JSONL file produced by eval-baseline."),
+) -> None:
+    """Print Table 4-style breakdowns for saved evaluation results."""
+    dataset = load_dataset()
+    results = load_results_jsonl(results_path)
+    breakdown = build_table4_breakdown(results, dataset)
+
+    rich_print(f"[bold]Breakdown for:[/bold] {results_path}")
+    for row in breakdown:
+        rich_print(
+            f"{row.label}: "
+            f"{row.correct_turns}/{row.total_turns} "
+            f"({row.accuracy:.1%})",
         )
 
 
