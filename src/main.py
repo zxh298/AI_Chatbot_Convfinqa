@@ -64,7 +64,7 @@ def chat(
 
         try:
             response = openai_client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-4o-mini",
                 messages=cast(
                     list[ChatCompletionMessageParam],
                     build_chat_messages(record, history, message),
