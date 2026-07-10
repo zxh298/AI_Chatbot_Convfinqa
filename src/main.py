@@ -88,6 +88,7 @@ def chat(
 
 @app.command()
 def eval_baseline(
+    split: str = typer.Option("dev", help="Dataset split to evaluate: train or dev."),
     max_records: int = typer.Option(3, help="Number of dev records to evaluate."),
     max_turns: Optional[int] = typer.Option(None, help="Optional maximum turns per record."),
     random_seed: Optional[int] = typer.Option(None, help="Random seed for reproducible record sampling."),
@@ -101,6 +102,14 @@ def eval_baseline(
         raise typer.Exit(code=1)
 
     dataset = load_dataset()
+    if split == "train":
+        records = dataset.train
+    elif split == "dev":
+        records = dataset.dev
+    else:
+        rich_print("[red]Error: --split must be 'train' or 'dev'[/red]")
+        raise typer.Exit(code=1)
+
     openai_client = OpenAI(api_key=api_key)
 
     def answer_question(
@@ -121,7 +130,7 @@ def eval_baseline(
 
     try:
         summary = evaluate_records(
-            records=select_records(dataset.dev, max_records=max_records, random_seed=random_seed),
+            records=select_records(records, max_records=max_records, random_seed=random_seed),
             answer_fn=answer_question,
             max_records=max_records,
             max_turns_per_record=max_turns,
@@ -131,7 +140,7 @@ def eval_baseline(
         raise typer.Exit(code=1) from e
 
     rich_print(
-        f"[bold]Baseline dev accuracy:[/bold] "
+        f"[bold]Baseline {split} accuracy:[/bold] "
         f"{summary.correct_turns}/{summary.total_turns} "
         f"({summary.accuracy:.1%})",
     )
