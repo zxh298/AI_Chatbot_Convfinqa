@@ -13,6 +13,7 @@ from src.data import load_dataset
 from src.evaluation import (
     build_table4_breakdown,
     evaluate_records,
+    evaluate_records_parallel,
     load_results_jsonl,
     select_records,
     write_results_jsonl,
@@ -93,6 +94,32 @@ class BaselineEvaluationTests(unittest.TestCase):
         )
 
         self.assertEqual(seen_calls, [(records[0].id, 0), (records[1].id, 0)])
+
+    def test_evaluate_records_parallel_preserves_record_order_and_turn_history(self) -> None:
+        dataset = load_dataset()
+        records = dataset.train[:2]
+        seen_history_lengths_by_record: dict[str, list[int]] = {record.id: [] for record in records}
+
+        def answer_fn(
+            record: ConvFinQARecord,
+            history: list[ChatTurn],
+            _question: str,
+        ) -> str:
+            seen_history_lengths_by_record[record.id].append(len(history))
+            return record.dialogue.conv_answers[len(history)]
+
+        summary = evaluate_records_parallel(
+            records=records,
+            answer_fn=answer_fn,
+            max_records=2,
+            max_turns_per_record=2,
+            workers=2,
+        )
+
+        self.assertEqual(summary.total_turns, 4)
+        self.assertEqual([result.record_id for result in summary.results], [records[0].id, records[0].id, records[1].id, records[1].id])
+        self.assertEqual(seen_history_lengths_by_record[records[0].id], [0, 1])
+        self.assertEqual(seen_history_lengths_by_record[records[1].id], [0, 1])
 
     def test_select_records_defaults_to_file_order(self) -> None:
         dataset = load_dataset()

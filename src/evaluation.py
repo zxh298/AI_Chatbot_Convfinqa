@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import random
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
@@ -72,41 +73,94 @@ def evaluate_records(
     results: list[TurnEvaluationResult] = []
 
     for record in records[:max_records]:
-        # History is reset per record, matching the interactive chat behavior.
-        history: list[ChatTurn] = []
-        turn_count = _aligned_turn_count(record)
-        if max_turns_per_record is not None:
-            turn_count = min(turn_count, max_turns_per_record)
+        results.extend(evaluate_record(record, answer_fn, max_turns_per_record))
 
-        for turn_index in range(turn_count):
-            question = record.dialogue.conv_questions[turn_index]
-            prediction = answer_fn(record, history, question)
-            gold_conv_answer = record.dialogue.conv_answers[turn_index]
-            gold_executed_answer = record.dialogue.executed_answers[turn_index]
-            parsed_prediction = parse_answer_text(prediction)
-            normalized_gold = normalize_executed_answer(gold_executed_answer)
-            is_correct = answers_match(
+    return summarize_results(results)
+
+
+def evaluate_records_parallel(
+    records: Sequence[ConvFinQARecord],
+    answer_fn: AnswerFn,
+    max_records: int,
+    max_turns_per_record: int | None = None,
+    workers: int = 4,
+) -> BaselineEvaluationSummary:
+    """Evaluate records concurrently while keeping turns sequential per record."""
+    selected_records = list(records[:max_records])
+    if workers <= 1:
+        return evaluate_records(
+            records=selected_records,
+            answer_fn=answer_fn,
+            max_records=max_records,
+            max_turns_per_record=max_turns_per_record,
+        )
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        # Parallelize only across records. Turns inside one record must stay
+        # sequential because later questions may depend on prior model answers.
+        # executor.map preserves selected_records order for stable JSONL output.
+        record_results = list(
+            executor.map(
+                lambda record: evaluate_record(record, answer_fn, max_turns_per_record),
+                selected_records,
+            ),
+        )
+
+    results = [result for record_result in record_results for result in record_result]
+    return summarize_results(results)
+
+
+def evaluate_record(
+    record: ConvFinQARecord,
+    answer_fn: AnswerFn,
+    max_turns_per_record: int | None = None,
+) -> list[TurnEvaluationResult]:
+    """Replay one record's turns sequentially and return turn-level results."""
+    # History is reset per record, matching the interactive chat behavior.
+    history: list[ChatTurn] = []
+    results: list[TurnEvaluationResult] = []
+    turn_count = _aligned_turn_count(record)
+    if max_turns_per_record is not None:
+        turn_count = min(turn_count, max_turns_per_record)
+
+    for turn_index in range(turn_count):
+        question = record.dialogue.conv_questions[turn_index]
+        prediction = answer_fn(record, history, question)
+        gold_conv_answer = record.dialogue.conv_answers[turn_index]
+        gold_executed_answer = record.dialogue.executed_answers[turn_index]
+        # Strict scoring uses executed_answers as gold. The question is passed
+        # only to interpret the model's own output, such as a missing percent
+        # sign when the calculation clearly expresses a percentage.
+        parsed_prediction = parse_answer_text(prediction, question=question)
+        normalized_gold = normalize_executed_answer(gold_executed_answer)
+        is_correct = answers_match(
+            prediction=prediction,
+            executed_answer=gold_executed_answer,
+            question=question,
+        )
+
+        results.append(
+            TurnEvaluationResult(
+                record_id=record.id,
+                turn_index=turn_index,
+                question=question,
                 prediction=prediction,
-                executed_answer=gold_executed_answer,
-            )
+                prediction_value=parsed_prediction.value,
+                prediction_is_percent=parsed_prediction.is_percent,
+                gold_conv_answer=gold_conv_answer,
+                gold_executed_answer=gold_executed_answer,
+                gold_value=normalized_gold.value,
+                gold_is_percent=normalized_gold.is_percent,
+                is_correct=is_correct,
+            ),
+        )
+        history.append(ChatTurn(user=question, assistant=prediction))
 
-            results.append(
-                TurnEvaluationResult(
-                    record_id=record.id,
-                    turn_index=turn_index,
-                    question=question,
-                    prediction=prediction,
-                    prediction_value=parsed_prediction.value,
-                    prediction_is_percent=parsed_prediction.is_percent,
-                    gold_conv_answer=gold_conv_answer,
-                    gold_executed_answer=gold_executed_answer,
-                    gold_value=normalized_gold.value,
-                    gold_is_percent=normalized_gold.is_percent,
-                    is_correct=is_correct,
-                ),
-            )
-            history.append(ChatTurn(user=question, assistant=prediction))
+    return results
 
+
+def summarize_results(results: Sequence[TurnEvaluationResult]) -> BaselineEvaluationSummary:
+    """Build an aggregate summary from turn-level results."""
     correct_turns = sum(result.is_correct for result in results)
     total_turns = len(results)
     accuracy = correct_turns / total_turns if total_turns else 0.0
@@ -115,7 +169,7 @@ def evaluate_records(
         total_turns=total_turns,
         correct_turns=correct_turns,
         accuracy=accuracy,
-        results=results,
+        results=list(results),
     )
 
 

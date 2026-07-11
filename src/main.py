@@ -2,6 +2,7 @@
 
 import os
 import sys
+import threading
 from pathlib import Path
 from typing import Optional, cast
 
@@ -15,6 +16,7 @@ from src.data import find_record, load_dataset
 from src.evaluation import (
     build_table4_breakdown,
     evaluate_records,
+    evaluate_records_parallel,
     load_results_jsonl,
     select_records,
     write_results_jsonl,
@@ -45,6 +47,7 @@ app = typer.Typer(
 def chat(
     record_id: str = typer.Argument(..., help="ID of the record to chat about"),
     use_evidence: bool = typer.Option(False, "--use-evidence", help="Use record-local evidence selection."),
+    show_evidence: bool = typer.Option(False, "--show-evidence", help="Print selected evidence snippets before each answer."),
 ) -> None:
     """Ask questions about a specific ConvFinQA record."""
     # Load the selected record before touching the API, so invalid IDs fail fast
@@ -89,6 +92,13 @@ def chat(
                 if use_evidence
                 else []
             )
+            if show_evidence and not use_evidence:
+                rich_print("[yellow]--show-evidence requires --use-evidence to select snippets.[/yellow]")
+            if show_evidence and evidence_snippets:
+                rich_print("[magenta][bold]selected evidence:[/bold][/magenta]")
+                for snippet in evidence_snippets:
+                    rich_print(f"[magenta]- [{snippet.snippet_id}] {snippet.text}[/magenta]")
+
             response = openai_client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=cast(
@@ -115,6 +125,7 @@ def eval_baseline(
     model: str = typer.Option("gpt-4o", help="OpenAI model to use."),
     output_path: Optional[Path] = typer.Option(None, help="Optional JSONL path for turn-level results."),
     use_evidence: bool = typer.Option(False, "--use-evidence", help="Use record-local evidence selection."),
+    workers: int = typer.Option(1, "--workers", min=1, help="Number of records to evaluate concurrently."),
 ) -> None:
     """Run strict executed-answer evaluation over train or dev records."""
     api_key = os.getenv("OPENAI_API_KEY")
@@ -133,6 +144,7 @@ def eval_baseline(
 
     openai_client = OpenAI(api_key=api_key)
     snippet_cache: dict[str, list[EvidenceSnippet]] = {}
+    snippet_cache_lock = threading.Lock()
 
     def answer_question(
         record: ConvFinQARecord,
@@ -143,7 +155,10 @@ def eval_baseline(
         # model call. That keeps evaluation testable with fake answer functions.
         evidence_snippets: list[EvidenceSnippet] = []
         if use_evidence:
-            record_snippets = snippet_cache.setdefault(record.id, build_evidence_snippets(record))
+            # With --workers, multiple records can be evaluated at once. Guard
+            # the cache so each record's deterministic snippets are built once.
+            with snippet_cache_lock:
+                record_snippets = snippet_cache.setdefault(record.id, build_evidence_snippets(record))
             evidence_snippets = _select_evidence_snippets(
                 openai_client=openai_client,
                 model=model,
@@ -161,11 +176,20 @@ def eval_baseline(
         return response or ""
 
     try:
+        selected_records = select_records(records, max_records=max_records, random_seed=random_seed)
+        # workers > 1 evaluates records concurrently, but each record still
+        # replays its turns in order to preserve conversational dependencies.
         summary = evaluate_records(
-            records=select_records(records, max_records=max_records, random_seed=random_seed),
+            records=selected_records,
             answer_fn=answer_question,
             max_records=max_records,
             max_turns_per_record=max_turns,
+        ) if workers == 1 else evaluate_records_parallel(
+            records=selected_records,
+            answer_fn=answer_question,
+            max_records=max_records,
+            max_turns_per_record=max_turns,
+            workers=workers,
         )
     except APIError as e:
         rich_print(f"[red]Error from OpenAI API: {e}")
