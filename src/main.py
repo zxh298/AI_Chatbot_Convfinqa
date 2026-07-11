@@ -19,6 +19,13 @@ from src.evaluation import (
     select_records,
     write_results_jsonl,
 )
+from src.evidence import (
+    EvidenceSnippet,
+    build_evidence_snippets,
+    build_rerank_messages,
+    select_candidate_snippets,
+    select_reranked_snippets,
+)
 from src.models import ConvFinQARecord
 from src.prompts import ChatTurn, build_chat_messages
 
@@ -37,6 +44,7 @@ app = typer.Typer(
 @app.command()
 def chat(
     record_id: str = typer.Argument(..., help="ID of the record to chat about"),
+    use_evidence: bool = typer.Option(False, "--use-evidence", help="Use record-local evidence selection."),
 ) -> None:
     """Ask questions about a specific ConvFinQA record."""
     # Load the selected record before touching the API, so invalid IDs fail fast
@@ -57,6 +65,7 @@ def chat(
 
     openai_client = OpenAI(api_key=api_key)
     history: list[ChatTurn] = []
+    record_snippets = build_evidence_snippets(record) if use_evidence else []
 
     while True:
         message = input(">>> ")
@@ -69,11 +78,22 @@ def chat(
             continue
 
         try:
+            evidence_snippets = (
+                _select_evidence_snippets(
+                    openai_client=openai_client,
+                    model="gpt-4o-mini",
+                    record_snippets=record_snippets,
+                    history=history,
+                    question=message,
+                )
+                if use_evidence
+                else []
+            )
             response = openai_client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=cast(
                     list[ChatCompletionMessageParam],
-                    build_chat_messages(record, history, message),
+                    build_chat_messages(record, history, message, evidence_snippets),
                 ),
             ).choices[0].message.content
 
@@ -94,6 +114,7 @@ def eval_baseline(
     random_seed: Optional[int] = typer.Option(None, help="Random seed for reproducible record sampling."),
     model: str = typer.Option("gpt-4o", help="OpenAI model to use."),
     output_path: Optional[Path] = typer.Option(None, help="Optional JSONL path for turn-level results."),
+    use_evidence: bool = typer.Option(False, "--use-evidence", help="Use record-local evidence selection."),
 ) -> None:
     """Run strict executed-answer evaluation over train or dev records."""
     api_key = os.getenv("OPENAI_API_KEY")
@@ -111,6 +132,7 @@ def eval_baseline(
         raise typer.Exit(code=1)
 
     openai_client = OpenAI(api_key=api_key)
+    snippet_cache: dict[str, list[EvidenceSnippet]] = {}
 
     def answer_question(
         record: ConvFinQARecord,
@@ -119,11 +141,21 @@ def eval_baseline(
     ) -> str:
         # The evaluator owns replay/history; this nested function owns only the
         # model call. That keeps evaluation testable with fake answer functions.
+        evidence_snippets: list[EvidenceSnippet] = []
+        if use_evidence:
+            record_snippets = snippet_cache.setdefault(record.id, build_evidence_snippets(record))
+            evidence_snippets = _select_evidence_snippets(
+                openai_client=openai_client,
+                model=model,
+                record_snippets=record_snippets,
+                history=history,
+                question=question,
+            )
         response = openai_client.chat.completions.create(
             model=model,
             messages=cast(
                 list[ChatCompletionMessageParam],
-                build_chat_messages(record, history, question),
+                build_chat_messages(record, history, question, evidence_snippets),
             ),
         ).choices[0].message.content
         return response or ""
@@ -172,6 +204,37 @@ def analyze_results(
             f"{row.correct_turns}/{row.total_turns} "
             f"({row.accuracy:.1%})",
         )
+
+
+def _select_evidence_snippets(
+    openai_client: OpenAI,
+    model: str,
+    record_snippets: list[EvidenceSnippet],
+    history: list[ChatTurn],
+    question: str,
+) -> list[EvidenceSnippet]:
+    """Select focused evidence with lexical filtering plus LLM reranking."""
+    candidates = select_candidate_snippets(
+        snippets=record_snippets,
+        history=history,
+        current_question=question,
+        limit=30,
+    )
+    if not candidates:
+        return []
+
+    reranker_response = openai_client.chat.completions.create(
+        model=model,
+        messages=cast(
+            list[ChatCompletionMessageParam],
+            build_rerank_messages(
+                history=history,
+                current_question=question,
+                candidate_snippets=candidates,
+            ),
+        ),
+    ).choices[0].message.content
+    return select_reranked_snippets(candidates, reranker_response or "")
 
 
 if __name__ == "__main__":

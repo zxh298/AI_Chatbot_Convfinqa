@@ -55,6 +55,12 @@ uv run main chat Single_PNC/2015/page_48.pdf-1
 
 This loads the selected ConvFinQA record, sends its `pre_text`, table, `post_text`, and conversation history to the model, and lets you ask follow-up questions interactively.
 
+To enable the record-local evidence-selection version, add `--use-evidence`:
+
+```bash
+uv run main chat Single_PNC/2015/page_48.pdf-1 --use-evidence
+```
+
 [![Chat](figures/chat_example.png)](figures/chat.png)  
 
 #### Run batch evaluation
@@ -69,6 +75,18 @@ uv run main eval-baseline \
 ```
 
 This replays dataset `conv_questions`, compares parsed model answers against strict `executed_answers`, and writes one JSONL row per evaluated turn.
+
+To evaluate the evidence-selection version, add `--use-evidence` and write to a separate output file:
+
+```bash
+uv run main eval-baseline \
+  --split train \
+  --model gpt-4o-mini \
+  --max-records 500 \
+  --random-seed 42 \
+  --use-evidence \
+  --output-path outputs/eval_train_500_random42_full_gpt4o_mini_evidence.jsonl
+```
 
 #### Analyze saved results
 
