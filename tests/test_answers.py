@@ -39,6 +39,25 @@ class AnswerNormalizationTests(unittest.TestCase):
     def test_percent_prediction_matches_executed_ratio_gold(self) -> None:
         self.assertTrue(answers_match("negative 3.3%", -0.03264))
 
+    def test_missing_percent_sign_is_inferred_from_percentage_question_and_calculation(self) -> None:
+        prediction = "Final answer: 5.3\nCalculation: (16.3 / 304.9) * 100 = 5.3%"
+        question = "what portion us related to performance guarantees?"
+
+        parsed = parse_answer_text(prediction, question=question)
+
+        self.assertTrue(parsed.is_percent)
+        self.assertAlmostEqual(parsed.value, 0.053)
+        self.assertTrue(answers_match(prediction, 0.05346, question=question))
+
+    def test_missing_percent_sign_is_not_inferred_without_percentage_question(self) -> None:
+        prediction = "Final answer: 5.3\nCalculation: one component was 5.3% of the total."
+        question = "what was the total value?"
+
+        parsed = parse_answer_text(prediction, question=question)
+
+        self.assertFalse(parsed.is_percent)
+        self.assertAlmostEqual(parsed.value, 5.3)
+
     def test_final_answer_line_is_preferred_over_calculation(self) -> None:
         prediction = "Calculation: (326 - 337) / 337 = -0.03264\nFinal answer: -3.3%"
 

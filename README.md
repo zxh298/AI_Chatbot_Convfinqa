@@ -61,6 +61,12 @@ To enable the record-local evidence-selection version, add `--use-evidence`:
 uv run main chat Single_PNC/2015/page_48.pdf-1 --use-evidence
 ```
 
+To inspect which snippets were selected on each turn, add `--show-evidence`:
+
+```bash
+uv run main chat Single_PNC/2015/page_48.pdf-1 --use-evidence --show-evidence
+```
+
 [![Chat](figures/chat_example.png)](figures/chat.png)  
 
 #### Run batch evaluation

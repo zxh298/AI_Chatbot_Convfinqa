@@ -19,6 +19,7 @@ _FINAL_ANSWER_PATTERN = re.compile(
     r"final\s+answer\s*:\s*(?P<answer>[^\n\r]+)",
     flags=re.IGNORECASE,
 )
+_PERCENT_QUESTION_PATTERN = re.compile(r"\b(?:percent|percentage|portion|ratio)\b", flags=re.IGNORECASE)
 
 
 class NormalizedAnswer(BaseModel):
@@ -36,7 +37,7 @@ class NormalizedAnswer(BaseModel):
     is_percent: bool = False
 
 
-def parse_answer_text(answer: str) -> NormalizedAnswer:
+def parse_answer_text(answer: str, question: str | None = None) -> NormalizedAnswer:
     """Parse an answer string into a comparable value when possible."""
     answer_text = _extract_final_answer(answer)
     normalized_text = _normalize_text(answer_text)
@@ -46,7 +47,11 @@ def parse_answer_text(answer: str) -> NormalizedAnswer:
         return NormalizedAnswer(raw=answer_text, value=normalized_text, is_numeric=False)
 
     value = float(match.group().replace(",", ""))
-    is_percent = "%" in normalized_text
+    is_percent = "%" in normalized_text or _implied_percent_answer(
+        full_answer=answer,
+        final_answer=answer_text,
+        question=question,
+    )
     if is_percent:
         # Store percentages on the same scale as ConvFinQA executed answers.
         value = value / 100
@@ -93,11 +98,12 @@ def normalize_executed_answer(executed_answer: AnswerValue) -> NormalizedAnswer:
 def answers_match(
     prediction: str,
     executed_answer: AnswerValue,
+    question: str | None = None,
     rel_tol: float = 1e-3,
     abs_tol: float = 1e-3,
 ) -> bool:
     """Compare a predicted answer with executable gold only."""
-    parsed_prediction = parse_answer_text(prediction)
+    parsed_prediction = parse_answer_text(prediction, question=question)
     gold_answer = normalize_executed_answer(executed_answer)
 
     return _normalized_answers_match(
@@ -112,11 +118,12 @@ def display_answers_match(
     prediction: str,
     executed_answer: AnswerValue,
     conv_answer: str,
+    question: str | None = None,
     rel_tol: float = 1e-3,
     abs_tol: float = 1e-3,
 ) -> bool:
     """Compare a prediction with display-normalized gold for diagnostics."""
-    parsed_prediction = parse_answer_text(prediction)
+    parsed_prediction = parse_answer_text(prediction, question=question)
     gold_answer = normalize_gold_answer(executed_answer, conv_answer)
 
     return _normalized_answers_match(
@@ -165,3 +172,28 @@ def _extract_final_answer(text: str) -> str:
     if match is None:
         return text
     return match.group("answer").strip()
+
+
+def _implied_percent_answer(
+    full_answer: str,
+    final_answer: str,
+    question: str | None,
+) -> bool:
+    """Infer a missing percent sign from the question and calculation text."""
+    # Keep this intentionally narrow: it fixes false negatives where the model
+    # calculated a percentage but omitted "%" on the machine-readable final line.
+    # It does not use conv_answers and it should not turn ordinary numbers into
+    # percentages unless the question and calculation both support that reading.
+    if "%" in final_answer:
+        return False
+    if question is None or _PERCENT_QUESTION_PATTERN.search(question) is None:
+        return False
+
+    normalized_answer = _normalize_text(full_answer)
+    return bool(
+        re.search(r"\bcalculation\s*:", normalized_answer)
+        and (
+            "%" in normalized_answer
+            or re.search(r"(?:\*|x|×)\s*100\b", normalized_answer)
+        )
+    )

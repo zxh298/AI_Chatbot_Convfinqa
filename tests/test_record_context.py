@@ -75,10 +75,18 @@ class RecordContextTests(unittest.TestCase):
         self.assertEqual(messages[2], {"role": "assistant", "content": "206588"})
         self.assertEqual(messages[3], {"role": "user", "content": "what about 2008?"})
 
-    def test_prompt_requires_comparable_final_answer_value(self) -> None:
+    def test_prompt_requires_value_check_and_comparable_final_answer_value(self) -> None:
         dataset = load_dataset()
         prompt = build_system_prompt(dataset.train[0]).lower()
 
+        self.assertIn("target:", prompt)
+        self.assertIn("values:", prompt)
+        self.assertIn("operation:", prompt)
+        self.assertIn("competing values", prompt)
+        self.assertIn("whose label and role best match the question target", prompt)
+        self.assertIn("not simply the first value or the zero value", prompt)
+        self.assertIn("not a convfinqa dsl program", prompt)
+        self.assertIn("choosing the wrong number", prompt)
         self.assertIn("only the final comparable answer", prompt)
         self.assertIn("without units, dates, or explanation", prompt)
         self.assertIn("calculation:", prompt)
