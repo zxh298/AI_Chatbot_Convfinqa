@@ -29,25 +29,54 @@ uv sync
 uv add <package_name>
 ```
 
-### [optional] Use CLI to chat
+### Run the ConvFinQA CLI
 
-We have created a boilerplate cli app using [typer](https://typer.tiangolo.com/) (sister of fastapi, built on click) so there is a simple chat interface, which you can extend to meet your needs if you so choose.  By default the chat responds with a standard message as shown below.
+The project exposes a [Typer](https://typer.tiangolo.com/) CLI with three workflows: interactive chat, batch evaluation, and offline result analysis.
 
+Show the available commands:
 
-We've installed the app as a script, so you can run it with:
 ```bash 
 uv run main
 ```
-or you can use the longer form:
+
+You can also use the longer form:
+
 ```bash
 uv run python src/main.py
 ```
 
-How to *chat*:
+Before calling the OpenAI API, set `OPENAI_API_KEY` in your environment or `.env` file.
+
+#### Chat with one record
+
 ```bash
-uv run main chat <record_id> 
+uv run main chat Single_PNC/2015/page_48.pdf-1
 ```
+
+This loads the selected ConvFinQA record, sends its `pre_text`, table, `post_text`, and conversation history to the model, and lets you ask follow-up questions interactively.
+
 [![Chat](figures/chat_example.png)](figures/chat.png)  
+
+#### Run batch evaluation
+
+```bash
+uv run main eval-baseline \
+  --split train \
+  --model gpt-4o-mini \
+  --max-records 500 \
+  --random-seed 42 \
+  --output-path outputs/eval_train_500_random42_full_gpt4o_mini_strict_executed.jsonl
+```
+
+This replays dataset `conv_questions`, compares parsed model answers against strict `executed_answers`, and writes one JSONL row per evaluated turn.
+
+#### Analyze saved results
+
+```bash
+uv run main analyze-results outputs/eval_train_500_random42_full_gpt4o_mini_strict_executed.jsonl
+```
+
+This reads a saved JSONL file and prints Table 4 / Figure 5-style breakdowns without making additional API calls.
 
 ## Submission 
 Please make a submission branch & make a PR to main. The PR should contain: 
@@ -62,4 +91,3 @@ NOTE: Please DO NOT merge any of your submission to main, all of your work shoul
 
 **Please let us know if you used any AI tools to help generate code for your assignment.**
 Using AI-powered IDEs or coding assistants is acceptable, as these are commonly used in real-world environments, and this assignment is intended to reflect that. If you’ve used AI tools to help you write code or your report, or any other part of your process, we ask that you disclose how and where you used them. This isn’t to catch you out. It’s an opportunity to show that you understand how to use these tools effectively and responsibly as part of your workflow.
-

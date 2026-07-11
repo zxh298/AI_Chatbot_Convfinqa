@@ -28,7 +28,7 @@ load_dotenv()
 # in small modules so each piece can be tested without invoking Typer/OpenAI.
 app = typer.Typer(
     name="main",
-    help="Boilerplate app for ConvFinQA",
+    help="ConvFinQA record-aware chat and evaluation CLI.",
     add_completion=True,
     no_args_is_help=True,
 )
@@ -38,7 +38,7 @@ app = typer.Typer(
 def chat(
     record_id: str = typer.Argument(..., help="ID of the record to chat about"),
 ) -> None:
-    """Ask questions about a specific record"""
+    """Ask questions about a specific ConvFinQA record."""
     # Load the selected record before touching the API, so invalid IDs fail fast
     # without requiring an OpenAI key or network call.
     dataset = load_dataset()
@@ -89,13 +89,13 @@ def chat(
 @app.command()
 def eval_baseline(
     split: str = typer.Option("dev", help="Dataset split to evaluate: train or dev."),
-    max_records: int = typer.Option(3, help="Number of dev records to evaluate."),
+    max_records: int = typer.Option(3, help="Number of records to evaluate."),
     max_turns: Optional[int] = typer.Option(None, help="Optional maximum turns per record."),
     random_seed: Optional[int] = typer.Option(None, help="Random seed for reproducible record sampling."),
     model: str = typer.Option("gpt-4o", help="OpenAI model to use."),
     output_path: Optional[Path] = typer.Option(None, help="Optional JSONL path for turn-level results."),
 ) -> None:
-    """Run a small dev-set baseline evaluation."""
+    """Run strict executed-answer evaluation over train or dev records."""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         rich_print("Error: OPENAI_API_KEY not found")
