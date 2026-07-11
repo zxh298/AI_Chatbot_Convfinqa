@@ -14,7 +14,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from src.answers import answers_match, normalize_gold_answer, parse_answer_text
+from src.answers import answers_match, normalize_executed_answer, parse_answer_text
 from src.models import ConvFinQADataset, ConvFinQARecord
 from src.prompts import ChatTurn
 
@@ -84,16 +84,10 @@ def evaluate_records(
             gold_conv_answer = record.dialogue.conv_answers[turn_index]
             gold_executed_answer = record.dialogue.executed_answers[turn_index]
             parsed_prediction = parse_answer_text(prediction)
-            normalized_gold = normalize_gold_answer(
-                executed_answer=gold_executed_answer,
-                conv_answer=gold_conv_answer,
-            )
-            # Compare against both gold fields because display format and raw
-            # execution scale differ for many percentage answers.
+            normalized_gold = normalize_executed_answer(gold_executed_answer)
             is_correct = answers_match(
                 prediction=prediction,
                 executed_answer=gold_executed_answer,
-                conv_answer=gold_conv_answer,
             )
 
             results.append(

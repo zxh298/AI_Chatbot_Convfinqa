@@ -1,8 +1,8 @@
 """Answer formatting and normalization helpers.
 
 The dataset has two answer views: `conv_answers` are human-facing strings,
-while `executed_answers` are raw program outputs. These helpers keep chat UX
-natural while making later evaluation numeric and tolerant of display formats.
+while `executed_answers` are raw program outputs. Headline evaluation uses the
+raw execution result; display-normalized comparison is kept for diagnostics.
 """
 
 from __future__ import annotations
@@ -55,10 +55,11 @@ def parse_answer_text(answer: str) -> NormalizedAnswer:
 
 
 def normalize_gold_answer(executed_answer: AnswerValue, conv_answer: str) -> NormalizedAnswer:
-    """Normalize gold answer fields for later evaluation.
+    """Normalize gold fields with the conversational answer as display aid.
 
     `conv_answer` preserves display intent, such as percentages. If it cannot be
-    parsed numerically, fall back to `executed_answer`.
+    parsed numerically, fall back to `executed_answer`. Use this for diagnostic
+    display-normalized scoring, not for the paper-aligned headline metric.
     """
     parsed_conv_answer = parse_answer_text(conv_answer)
     if parsed_conv_answer.is_numeric:
@@ -77,17 +78,62 @@ def normalize_gold_answer(executed_answer: AnswerValue, conv_answer: str) -> Nor
     return parse_answer_text(str(executed_answer))
 
 
+def normalize_executed_answer(executed_answer: AnswerValue) -> NormalizedAnswer:
+    """Normalize the executable gold result for strict execution accuracy."""
+    if isinstance(executed_answer, (float, int)):
+        return NormalizedAnswer(
+            raw=str(executed_answer),
+            value=float(executed_answer),
+            is_numeric=True,
+        )
+
+    return parse_answer_text(str(executed_answer))
+
+
 def answers_match(
+    prediction: str,
+    executed_answer: AnswerValue,
+    rel_tol: float = 1e-3,
+    abs_tol: float = 1e-3,
+) -> bool:
+    """Compare a predicted answer with executable gold only."""
+    parsed_prediction = parse_answer_text(prediction)
+    gold_answer = normalize_executed_answer(executed_answer)
+
+    return _normalized_answers_match(
+        parsed_prediction=parsed_prediction,
+        gold_answer=gold_answer,
+        rel_tol=rel_tol,
+        abs_tol=abs_tol,
+    )
+
+
+def display_answers_match(
     prediction: str,
     executed_answer: AnswerValue,
     conv_answer: str,
     rel_tol: float = 1e-3,
     abs_tol: float = 1e-3,
 ) -> bool:
-    """Compare a predicted answer with gold answer fields."""
+    """Compare a prediction with display-normalized gold for diagnostics."""
     parsed_prediction = parse_answer_text(prediction)
     gold_answer = normalize_gold_answer(executed_answer, conv_answer)
 
+    return _normalized_answers_match(
+        parsed_prediction=parsed_prediction,
+        gold_answer=gold_answer,
+        rel_tol=rel_tol,
+        abs_tol=abs_tol,
+    )
+
+
+def _normalized_answers_match(
+    parsed_prediction: NormalizedAnswer,
+    gold_answer: NormalizedAnswer,
+    rel_tol: float,
+    abs_tol: float,
+) -> bool:
+    """Compare two normalized answers with numeric tolerance when possible."""
     if parsed_prediction.is_numeric and gold_answer.is_numeric:
         assert isinstance(parsed_prediction.value, float)
         assert isinstance(gold_answer.value, float)

@@ -10,7 +10,13 @@ import unittest
 from pathlib import Path
 
 from src.data import load_dataset
-from src.evaluation import build_table4_breakdown, evaluate_records, load_results_jsonl, select_records, write_results_jsonl
+from src.evaluation import (
+    build_table4_breakdown,
+    evaluate_records,
+    load_results_jsonl,
+    select_records,
+    write_results_jsonl,
+)
 from src.models import ConvFinQARecord
 from src.prompts import ChatTurn
 
@@ -133,6 +139,29 @@ class BaselineEvaluationTests(unittest.TestCase):
         self.assertIn("prediction_value", saved_rows[0])
         self.assertIn("gold_conv_answer", saved_rows[0])
         self.assertIn("gold_value", saved_rows[0])
+
+    def test_evaluate_records_uses_strict_executed_gold_for_correctness(self) -> None:
+        dataset = load_dataset()
+        record = next(record for record in dataset.train if record.id == "Single_STT/2013/page_54.pdf-4")
+
+        def answer_fn(
+            _record: ConvFinQARecord,
+            _history: list[ChatTurn],
+            _question: str,
+        ) -> str:
+            return "Final answer: 128"
+
+        summary = evaluate_records(
+            records=[record],
+            answer_fn=answer_fn,
+            max_records=1,
+            max_turns_per_record=1,
+        )
+
+        self.assertEqual(summary.results[0].gold_conv_answer, "128")
+        self.assertEqual(summary.results[0].gold_executed_answer, 2.28)
+        self.assertEqual(summary.results[0].gold_value, 2.28)
+        self.assertFalse(summary.results[0].is_correct)
 
     def test_load_results_jsonl_round_trips_saved_results(self) -> None:
         dataset = load_dataset()
