@@ -1,199 +1,137 @@
-"""Answer formatting and normalization helpers.
+"""Answer generation for selected ConvFinQA records.
 
-The dataset has two answer views: `conv_answers` are human-facing strings,
-while `executed_answers` are raw program outputs. Headline evaluation uses the
-raw execution result; display-normalized comparison is kept for diagnostics.
+This module is the only place that calls the OpenAI chat API for final answers.
+It turns a record, conversation history, and current question into raw model
+prediction text. Evaluation-specific parsing and correctness checks live in
+`src.evaluation`, not here.
+
+Versions are explicit:
+- v1 uses the full selected record as context.
+- v2 adds record-local evidence selection before answering.
 """
 
 from __future__ import annotations
 
-import math
-import re
-from typing import Union
+import threading
+import time
+from collections.abc import Sequence
+from enum import Enum
+from typing import cast
 
-from pydantic import BaseModel, ConfigDict
+from openai import OpenAI, RateLimitError
+from openai.types.chat import ChatCompletionMessageParam
+from pydantic import BaseModel, ConfigDict, Field
 
-AnswerValue = Union[float, int, str]
-_NUMBER_PATTERN = re.compile(r"[-+]?(?:\d[\d,]*(?:\.\d+)?|\.\d+)")
-_FINAL_ANSWER_PATTERN = re.compile(
-    r"final\s+answer\s*:\s*(?P<answer>[^\n\r]+)",
-    flags=re.IGNORECASE,
+from src.evidence import (
+    EvidenceSnippet,
+    build_evidence_snippets,
+    select_relevant_evidence,
 )
-_PERCENT_QUESTION_PATTERN = re.compile(r"\b(?:percent|percentage|portion|ratio)\b", flags=re.IGNORECASE)
+from src.logger import get_logger
+from src.models import ConvFinQARecord
+from src.prompts import ChatTurn, build_chat_messages
+
+logger = get_logger(__name__)
+_MAX_RATE_LIMIT_RETRIES = 6
+_INITIAL_RETRY_DELAY_SECONDS = 1.0
+_MAX_RETRY_DELAY_SECONDS = 30.0
 
 
-class NormalizedAnswer(BaseModel):
-    """Comparable answer value.
+class AnswerVersion(str, Enum):
+    """Available answer-generation versions."""
 
-    Percentage strings are normalized to their ratio value:
-    `-3.3%` becomes `-0.033`.
-    """
+    V1 = "v1"
+    V2 = "v2"
+
+
+_EVIDENCE_SELECTION_VERSIONS = {AnswerVersion.V2}
+
+
+class AnswerResponse(BaseModel):
+    """One model answer plus the evidence snippets used to produce it."""
 
     model_config = ConfigDict(extra="forbid")
 
-    raw: str
-    value: float | str
-    is_numeric: bool
-    is_percent: bool = False
+    text: str
+    evidence_snippets: list[EvidenceSnippet] = Field(default_factory=list)
 
 
-def parse_answer_text(answer: str, question: str | None = None) -> NormalizedAnswer:
-    """Parse an answer string into a comparable value when possible."""
-    answer_text = _extract_final_answer(answer)
-    normalized_text = _normalize_text(answer_text)
-    matches = list(_NUMBER_PATTERN.finditer(normalized_text))
-    match = matches[-1] if matches else None
-    if match is None:
-        return NormalizedAnswer(raw=answer_text, value=normalized_text, is_numeric=False)
+class OpenAIAnswerer:
+    """Generate answers while hiding OpenAI and evidence-selection details."""
 
-    value = float(match.group().replace(",", ""))
-    is_percent = "%" in normalized_text or _implied_percent_answer(
-        full_answer=answer,
-        final_answer=answer_text,
-        question=question,
-    )
-    if is_percent:
-        # Store percentages on the same scale as ConvFinQA executed answers.
-        value = value / 100
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        version: AnswerVersion = AnswerVersion.V1,
+    ) -> None:
+        self._client = OpenAI(api_key=api_key)
+        self._model = model
+        self._version = version
+        self._snippet_cache: dict[str, list[EvidenceSnippet]] = {}
+        self._snippet_cache_lock = threading.Lock()
 
-    return NormalizedAnswer(raw=answer_text, value=value, is_numeric=True, is_percent=is_percent)
+    def answer(
+        self,
+        record: ConvFinQARecord,
+        history: Sequence[ChatTurn],
+        question: str,
+    ) -> AnswerResponse:
+        """Answer one question for a selected record."""
+        evidence_snippets = self._select_evidence(record, history, question)
+        response_text = self._request_chat_completion(
+            build_chat_messages(
+                record=record,
+                history=list(history),
+                current_question=question,
+                evidence_snippets=evidence_snippets,
+            ),
+        )
+        return AnswerResponse(text=response_text, evidence_snippets=evidence_snippets)
 
+    def _select_evidence(
+        self,
+        record: ConvFinQARecord,
+        history: Sequence[ChatTurn],
+        question: str,
+    ) -> list[EvidenceSnippet]:
+        if self._version not in _EVIDENCE_SELECTION_VERSIONS:
+            return []
 
-def normalize_gold_answer(executed_answer: AnswerValue, conv_answer: str) -> NormalizedAnswer:
-    """Normalize gold fields with the conversational answer as display aid.
+        # Multiple records may be processed concurrently in batch runs. Guard the
+        # deterministic snippet cache so each record is built once per run.
+        with self._snippet_cache_lock:
+            record_snippets = self._snippet_cache.setdefault(record.id, build_evidence_snippets(record))
 
-    `conv_answer` preserves display intent, such as percentages. If it cannot be
-    parsed numerically, fall back to `executed_answer`. Use this for diagnostic
-    display-normalized scoring, not for the paper-aligned headline metric.
-    """
-    parsed_conv_answer = parse_answer_text(conv_answer)
-    if parsed_conv_answer.is_numeric:
-        # Prefer display answer scale: "-3.3%" should compare as -0.033.
-        return parsed_conv_answer
-
-    if isinstance(executed_answer, (float, int)):
-        # Some answers are not display-formatted, so the raw execution result is
-        # the best comparable value.
-        return NormalizedAnswer(
-            raw=str(executed_answer),
-            value=float(executed_answer),
-            is_numeric=True,
+        return select_relevant_evidence(
+            snippets=record_snippets,
+            history=history,
+            current_question=question,
+            rerank_fn=self._request_chat_completion,
         )
 
-    return parse_answer_text(str(executed_answer))
+    def _request_chat_completion(self, messages: list[dict[str, str]]) -> str:
+        """Call the chat API and normalize an empty response to an empty string."""
+        retry_delay = _INITIAL_RETRY_DELAY_SECONDS
+        for attempt in range(_MAX_RATE_LIMIT_RETRIES + 1):
+            try:
+                return (
+                    self._client.chat.completions.create(
+                        model=self._model,
+                        messages=cast(list[ChatCompletionMessageParam], messages),
+                    ).choices[0].message.content
+                    or ""
+                )
+            except RateLimitError:
+                if attempt >= _MAX_RATE_LIMIT_RETRIES:
+                    raise
+                logger.warning(
+                    "OpenAI rate limit reached; retrying in %.1fs (attempt %s/%s)",
+                    retry_delay,
+                    attempt + 1,
+                    _MAX_RATE_LIMIT_RETRIES,
+                )
+                time.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, _MAX_RETRY_DELAY_SECONDS)
 
-
-def normalize_executed_answer(executed_answer: AnswerValue) -> NormalizedAnswer:
-    """Normalize the executable gold result for strict execution accuracy."""
-    if isinstance(executed_answer, (float, int)):
-        return NormalizedAnswer(
-            raw=str(executed_answer),
-            value=float(executed_answer),
-            is_numeric=True,
-        )
-
-    return parse_answer_text(str(executed_answer))
-
-
-def answers_match(
-    prediction: str,
-    executed_answer: AnswerValue,
-    question: str | None = None,
-    rel_tol: float = 1e-3,
-    abs_tol: float = 1e-3,
-) -> bool:
-    """Compare a predicted answer with executable gold only."""
-    parsed_prediction = parse_answer_text(prediction, question=question)
-    gold_answer = normalize_executed_answer(executed_answer)
-
-    return _normalized_answers_match(
-        parsed_prediction=parsed_prediction,
-        gold_answer=gold_answer,
-        rel_tol=rel_tol,
-        abs_tol=abs_tol,
-    )
-
-
-def display_answers_match(
-    prediction: str,
-    executed_answer: AnswerValue,
-    conv_answer: str,
-    question: str | None = None,
-    rel_tol: float = 1e-3,
-    abs_tol: float = 1e-3,
-) -> bool:
-    """Compare a prediction with display-normalized gold for diagnostics."""
-    parsed_prediction = parse_answer_text(prediction, question=question)
-    gold_answer = normalize_gold_answer(executed_answer, conv_answer)
-
-    return _normalized_answers_match(
-        parsed_prediction=parsed_prediction,
-        gold_answer=gold_answer,
-        rel_tol=rel_tol,
-        abs_tol=abs_tol,
-    )
-
-
-def _normalized_answers_match(
-    parsed_prediction: NormalizedAnswer,
-    gold_answer: NormalizedAnswer,
-    rel_tol: float,
-    abs_tol: float,
-) -> bool:
-    """Compare two normalized answers with numeric tolerance when possible."""
-    if parsed_prediction.is_numeric and gold_answer.is_numeric:
-        assert isinstance(parsed_prediction.value, float)
-        assert isinstance(gold_answer.value, float)
-        return math.isclose(
-            parsed_prediction.value,
-            gold_answer.value,
-            rel_tol=rel_tol,
-            abs_tol=abs_tol,
-        )
-
-    return str(parsed_prediction.value).strip().lower() == str(gold_answer.value).strip().lower()
-
-
-def _normalize_text(text: str) -> str:
-    """Normalize common model wording before numeric parsing."""
-    return (
-        text.strip()
-        .lower()
-        .replace("negative ", "-")
-        .replace("negative", "-")
-        .replace("positive", "")
-        .replace("−", "-")
-    )
-
-
-def _extract_final_answer(text: str) -> str:
-    """Prefer an explicit final-answer line when the model provides one."""
-    match = _FINAL_ANSWER_PATTERN.search(text)
-    if match is None:
-        return text
-    return match.group("answer").strip()
-
-
-def _implied_percent_answer(
-    full_answer: str,
-    final_answer: str,
-    question: str | None,
-) -> bool:
-    """Infer a missing percent sign from the question and calculation text."""
-    # Keep this intentionally narrow: it fixes false negatives where the model
-    # calculated a percentage but omitted "%" on the machine-readable final line.
-    # It does not use conv_answers and it should not turn ordinary numbers into
-    # percentages unless the question and calculation both support that reading.
-    if "%" in final_answer:
-        return False
-    if question is None or _PERCENT_QUESTION_PATTERN.search(question) is None:
-        return False
-
-    normalized_answer = _normalize_text(full_answer)
-    return bool(
-        re.search(r"\bcalculation\s*:", normalized_answer)
-        and (
-            "%" in normalized_answer
-            or re.search(r"(?:\*|x|×)\s*100\b", normalized_answer)
-        )
-    )
+        raise RuntimeError("unreachable retry state")

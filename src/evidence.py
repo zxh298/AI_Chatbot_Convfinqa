@@ -1,14 +1,16 @@
-"""Record-local evidence snippets for ConvFinQA prompts.
+"""Record-local evidence selection for ConvFinQA prompts.
 
 The document is already selected by ``record_id``, so this module focuses on
 finding useful evidence inside that one record rather than searching across the
-whole dataset.
+whole dataset. It builds deterministic text/table snippets, cheaply filters
+candidates, and lets an injected reranker choose the final snippets. The module
+does not call OpenAI directly; callers provide the reranker function.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
@@ -95,6 +97,33 @@ def select_candidate_snippets(
     ]
     scored.sort(key=lambda item: (-item[0], item[1]))
     return [snippet for score, _index, snippet in scored[:limit] if score > 0] or list(snippets[:limit])
+
+
+def select_relevant_evidence(
+    snippets: Sequence[EvidenceSnippet],
+    history: Sequence[ChatTurn],
+    current_question: str,
+    rerank_fn: Callable[[list[dict[str, str]]], str],
+    candidate_limit: int = 30,
+) -> list[EvidenceSnippet]:
+    """Select final evidence snippets using lexical filtering plus reranking."""
+    candidates = select_candidate_snippets(
+        snippets=snippets,
+        history=history,
+        current_question=current_question,
+        limit=candidate_limit,
+    )
+    if not candidates:
+        return []
+
+    reranker_response = rerank_fn(
+        build_rerank_messages(
+            history=history,
+            current_question=current_question,
+            candidate_snippets=candidates,
+        ),
+    )
+    return select_reranked_snippets(candidates, reranker_response)
 
 
 def build_rerank_messages(

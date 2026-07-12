@@ -1,7 +1,9 @@
-"""Prompt construction for the record-aware chat.
+"""Prompt construction for record-aware answering.
 
 The prompt stays intentionally direct: provide the selected record, preserve
-chat history, and ask for concise calculations when needed.
+chat history, include optional evidence snippets, and ask for a concise final
+answer plus a lightweight calculation check. This module only builds messages;
+it does not call the model or parse outputs.
 """
 
 from __future__ import annotations

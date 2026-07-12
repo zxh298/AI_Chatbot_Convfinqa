@@ -1,7 +1,9 @@
-"""Formatting helpers for financial record context.
+"""Formatting helpers for prompt-ready financial context.
 
 ConvFinQA tables are column-oriented dictionaries. The prompt is easier for an
 LLM to read when that structure is converted into a compact Markdown table.
+This module performs only deterministic formatting; it does not select evidence
+or call the model.
 """
 
 from __future__ import annotations

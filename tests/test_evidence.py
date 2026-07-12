@@ -11,6 +11,7 @@ from src.evidence import (
     build_rerank_messages,
     format_evidence_snippets,
     select_candidate_snippets,
+    select_relevant_evidence,
     select_reranked_snippets,
 )
 from src.models import ConvFinQARecord, Dialogue, Document, Features
@@ -84,6 +85,23 @@ class EvidenceSelectionTests(unittest.TestCase):
 
         self.assertEqual([snippet.snippet_id for snippet in selected[:2]], [candidates[2].snippet_id, candidates[0].snippet_id])
         self.assertEqual(len(selected), 3)
+
+    def test_select_relevant_evidence_wraps_filtering_and_reranking(self) -> None:
+        record = _make_record()
+        snippets = build_evidence_snippets(record)
+
+        def rerank_fn(messages: list[dict[str, str]]) -> str:
+            self.assertIn("what percentage of the facility was used?", messages[1]["content"])
+            return "T-3, T-4"
+
+        selected = select_relevant_evidence(
+            snippets=snippets,
+            history=[],
+            current_question="what percentage of the facility was used?",
+            rerank_fn=rerank_fn,
+        )
+
+        self.assertGreater(len(selected), 0)
 
     def test_format_evidence_snippets_is_prompt_readable(self) -> None:
         record = _make_record()

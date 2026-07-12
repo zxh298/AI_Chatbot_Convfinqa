@@ -1,4 +1,9 @@
-"""Pydantic models for the cleaned ConvFinQA dataset."""
+"""Pydantic models for the cleaned ConvFinQA dataset.
+
+These models define the typed boundary between the raw JSON file and the rest
+of the application. They intentionally mirror the dataset structure closely so
+loading is explicit without adding unnecessary abstraction.
+"""
 
 from __future__ import annotations
 

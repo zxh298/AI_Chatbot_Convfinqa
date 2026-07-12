@@ -1,7 +1,8 @@
-"""Dataset loading helpers for ConvFinQA.
+"""Dataset loading and record lookup for ConvFinQA.
 
-The cleaned dataset is part of the repository, so the default path is kept in
-code rather than hidden in environment configuration.
+The cleaned dataset is committed to the repository. This module owns the file
+path, Pydantic validation, and lookup of a selected `record_id` across train and
+dev splits. It does not build prompts, call models, or evaluate predictions.
 """
 
 from __future__ import annotations

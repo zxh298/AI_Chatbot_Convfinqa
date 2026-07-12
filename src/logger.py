@@ -1,3 +1,11 @@
+"""Shared logging configuration for CLI and helper modules.
+
+The employer-provided helper reads `LOG_LEVEL` and `LOG_FORMAT` from the
+environment and returns a module-specific logger. User-facing command output
+still uses Rich printing in `main.py`; this logger is for operational details
+and errors.
+"""
+
 import logging
 import os
 
