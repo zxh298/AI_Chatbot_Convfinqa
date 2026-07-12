@@ -50,49 +50,60 @@ Before calling the OpenAI API, set `OPENAI_API_KEY` in your environment or `.env
 #### Chat with one record
 
 ```bash
-uv run main chat Single_PNC/2015/page_48.pdf-1
+uv run main chat Single_PNC/2015/page_48.pdf-1 --version v1
 ```
 
 This loads the selected ConvFinQA record, sends its `pre_text`, table, `post_text`, and conversation history to the model, and lets you ask follow-up questions interactively.
 
-To enable the record-local evidence-selection version, add `--use-evidence`:
+To enable the record-local evidence-selection version, set `--version v2`:
 
 ```bash
-uv run main chat Single_PNC/2015/page_48.pdf-1 --use-evidence
+uv run main chat Single_PNC/2015/page_48.pdf-1 --version v2
 ```
 
 To inspect which snippets were selected on each turn, add `--show-evidence`:
 
 ```bash
-uv run main chat Single_PNC/2015/page_48.pdf-1 --use-evidence --show-evidence
+uv run main chat Single_PNC/2015/page_48.pdf-1 --version v2 --show-evidence
 ```
 
 [![Chat](figures/chat_example.png)](figures/chat.png)  
 
-#### Run batch evaluation
+#### Run the model
 
 ```bash
-uv run main eval-baseline \
+uv run main run \
   --split train \
   --model gpt-4o-mini \
   --max-records 500 \
   --random-seed 42 \
+  --version v1 \
+  --output-path outputs/run_train_500_random42_full_gpt4o_mini.jsonl
+```
+
+This replays dataset `conv_questions` and writes one raw JSONL row per model answer. The run file stores predictions only; it does not store gold answers or correctness.
+
+To run the evidence-selection version, set `--version v2` and write to a separate output file:
+
+```bash
+uv run main run \
+  --split train \
+  --model gpt-4o-mini \
+  --max-records 500 \
+  --random-seed 42 \
+  --version v2 \
+  --output-path outputs/run_train_500_random42_full_gpt4o_mini_evidence.jsonl
+```
+
+#### Evaluate saved predictions
+
+```bash
+uv run main evaluate \
+  outputs/run_train_500_random42_full_gpt4o_mini.jsonl \
   --output-path outputs/eval_train_500_random42_full_gpt4o_mini_strict_executed.jsonl
 ```
 
-This replays dataset `conv_questions`, compares parsed model answers against strict `executed_answers`, and writes one JSONL row per evaluated turn.
-
-To evaluate the evidence-selection version, add `--use-evidence` and write to a separate output file:
-
-```bash
-uv run main eval-baseline \
-  --split train \
-  --model gpt-4o-mini \
-  --max-records 500 \
-  --random-seed 42 \
-  --use-evidence \
-  --output-path outputs/eval_train_500_random42_full_gpt4o_mini_evidence.jsonl
-```
+This compares saved predictions against strict `executed_answers`, prints Table 4 / Figure 5-style breakdowns, and optionally writes a scored JSONL file.
 
 #### Analyze saved results
 
@@ -100,7 +111,7 @@ uv run main eval-baseline \
 uv run main analyze-results outputs/eval_train_500_random42_full_gpt4o_mini_strict_executed.jsonl
 ```
 
-This reads a saved JSONL file and prints Table 4 / Figure 5-style breakdowns without making additional API calls.
+This reads an already-scored JSONL file and prints Table 4 / Figure 5-style breakdowns without making additional API calls.
 
 ## Submission 
 Please make a submission branch & make a PR to main. The PR should contain: 
