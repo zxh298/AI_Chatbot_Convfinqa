@@ -8,6 +8,7 @@ prediction text. Evaluation-specific parsing and correctness checks live in
 Versions are explicit:
 - v1 uses the full selected record as context.
 - v2 adds record-local evidence selection before answering.
+- v3 adds one no-gold verification retry on top of v2.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ from src.evidence import (
 from src.logger import get_logger
 from src.models import ConvFinQARecord
 from src.prompts import ChatTurn, build_chat_messages
+from src.verification import build_retry_instruction, verify_answer
 
 logger = get_logger(__name__)
 _MAX_RATE_LIMIT_RETRIES = 6
@@ -42,9 +44,11 @@ class AnswerVersion(str, Enum):
 
     V1 = "v1"
     V2 = "v2"
+    V3 = "v3"
 
 
-_EVIDENCE_SELECTION_VERSIONS = {AnswerVersion.V2}
+_EVIDENCE_SELECTION_VERSIONS = {AnswerVersion.V2, AnswerVersion.V3}
+_VERIFICATION_VERSIONS = {AnswerVersion.V3}
 
 
 class AnswerResponse(BaseModel):
@@ -79,13 +83,18 @@ class OpenAIAnswerer:
     ) -> AnswerResponse:
         """Answer one question for a selected record."""
         evidence_snippets = self._select_evidence(record, history, question)
-        response_text = self._request_chat_completion(
-            build_chat_messages(
-                record=record,
-                history=list(history),
-                current_question=question,
-                evidence_snippets=evidence_snippets,
-            ),
+        messages = build_chat_messages(
+            record=record,
+            history=list(history),
+            current_question=question,
+            evidence_snippets=evidence_snippets,
+        )
+        response_text = self._request_chat_completion(messages)
+        response_text = self._retry_if_verification_fails(
+            messages=messages,
+            question=question,
+            response_text=response_text,
+            evidence_snippets=evidence_snippets,
         )
         return AnswerResponse(text=response_text, evidence_snippets=evidence_snippets)
 
@@ -109,6 +118,32 @@ class OpenAIAnswerer:
             current_question=question,
             rerank_fn=self._request_chat_completion,
         )
+
+    def _retry_if_verification_fails(
+        self,
+        messages: list[dict[str, str]],
+        question: str,
+        response_text: str,
+        evidence_snippets: Sequence[EvidenceSnippet],
+    ) -> str:
+        if self._version not in _VERIFICATION_VERSIONS:
+            return response_text
+
+        verification = verify_answer(
+            question=question,
+            answer=response_text,
+            evidence_snippets=evidence_snippets,
+        )
+        if not verification.should_retry or verification.reason is None:
+            return response_text
+
+        logger.info("Retrying answer after verification warning: %s", verification.reason)
+        retry_messages = [
+            *messages,
+            {"role": "assistant", "content": response_text},
+            {"role": "user", "content": build_retry_instruction(verification.reason)},
+        ]
+        return self._request_chat_completion(retry_messages)
 
     def _request_chat_completion(self, messages: list[dict[str, str]]) -> str:
         """Call the chat API and normalize an empty response to an empty string."""

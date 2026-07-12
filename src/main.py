@@ -42,7 +42,7 @@ def chat(
     version: AnswerVersion = typer.Option(
         AnswerVersion.V1,
         "--version",
-        help="Answering version: v1=full-record baseline, v2=evidence selection.",
+        help="Answering version: v1=full-record baseline, v2=evidence selection, v3=evidence plus verification retry.",
     ),
     show_evidence: bool = typer.Option(False, "--show-evidence", help="Print selected evidence snippets before each answer."),
 ) -> None:
@@ -103,7 +103,7 @@ def run_baseline(
     version: AnswerVersion = typer.Option(
         AnswerVersion.V1,
         "--version",
-        help="Answering version: v1=full-record baseline, v2=evidence selection.",
+        help="Answering version: v1=full-record baseline, v2=evidence selection, v3=evidence plus verification retry.",
     ),
     workers: int = typer.Option(1, "--workers", min=1, help="Number of records to run concurrently."),
 ) -> None:

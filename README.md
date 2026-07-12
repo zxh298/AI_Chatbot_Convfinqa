@@ -67,6 +67,12 @@ To inspect which snippets were selected on each turn, add `--show-evidence`:
 uv run main chat Single_PNC/2015/page_48.pdf-1 --version v2 --show-evidence
 ```
 
+To run the evidence-selection version with one lightweight verification retry, use `--version v3`:
+
+```bash
+uv run main chat Single_PNC/2015/page_48.pdf-1 --version v3 --show-evidence
+```
+
 [![Chat](figures/chat_example.png)](figures/chat.png)  
 
 #### Run the model
@@ -93,6 +99,18 @@ uv run main run \
   --random-seed 42 \
   --version v2 \
   --output-path outputs/run_train_500_random42_full_gpt4o_mini_evidence.jsonl
+```
+
+To run evidence selection plus no-gold verification retry, set `--version v3`:
+
+```bash
+uv run main run \
+  --split train \
+  --model gpt-4o-mini \
+  --max-records 500 \
+  --random-seed 42 \
+  --version v3 \
+  --output-path outputs/run_train_500_random42_gpt4o_mini_v3.jsonl
 ```
 
 #### Evaluate saved predictions
