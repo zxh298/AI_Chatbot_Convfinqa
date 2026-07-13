@@ -189,9 +189,14 @@ def run_record(
         results.append(result)
         if on_turn_result is not None:
             on_turn_result(result)
-        history.append(ChatTurn(user=question, assistant=prediction))
+        history.append(ChatTurn(user=question, assistant=answer_for_history(prediction)))
 
     return results
+
+
+def answer_for_history(answer: str) -> str:
+    """Return compact prior-turn text for follow-up prompts."""
+    return f"Final answer: {_extract_final_answer(answer)}"
 
 
 def parse_answer_text(answer: str, question: str | None = None) -> NormalizedAnswer:

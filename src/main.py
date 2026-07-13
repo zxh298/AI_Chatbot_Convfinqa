@@ -111,7 +111,7 @@ def chat(
             logger.exception("OpenAI API error during chat")
             continue
 
-        history.append(ChatTurn(user=message, assistant=answer.text))
+        history.append(ChatTurn(user=message, assistant=evaluation.answer_for_history(answer.text)))
 
 
 @app.command("run")

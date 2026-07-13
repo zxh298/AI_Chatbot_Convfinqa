@@ -12,6 +12,7 @@ from pathlib import Path
 from src.answers import AnswerVersion
 from src.data import load_dataset
 from src.evaluation import (
+    answer_for_history,
     append_run_result_jsonl,
     build_table4_breakdown,
     deduplicate_run_results,
@@ -79,6 +80,38 @@ class BaselineEvaluationTests(unittest.TestCase):
         )
 
         self.assertEqual(seen_history_lengths, [0, 1, 2])
+
+    def test_run_records_uses_compact_final_answer_in_history(self) -> None:
+        dataset = load_dataset()
+        record = dataset.train[0]
+        seen_assistant_history: list[str] = []
+
+        def answer_fn(
+            _record: ConvFinQARecord,
+            history: list[ChatTurn],
+            _question: str,
+        ) -> str:
+            if history:
+                seen_assistant_history.append(history[-1].assistant)
+            return (
+                "Target: noisy reasoning\n"
+                "Values: value = 123\n"
+                "Operation: select value\n"
+                "Final answer: 123\n"
+                "Calculation: none"
+            )
+
+        run_records(
+            records=[record],
+            answer_fn=answer_fn,
+            max_records=1,
+            max_turns_per_record=2,
+        )
+
+        self.assertEqual(seen_assistant_history, ["Final answer: 123"])
+
+    def test_answer_for_history_falls_back_to_raw_text_without_final_answer_line(self) -> None:
+        self.assertEqual(answer_for_history("The answer is unknown."), "Final answer: The answer is unknown.")
 
     def test_run_records_keeps_context_isolated_per_record(self) -> None:
         dataset = load_dataset()
