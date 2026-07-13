@@ -1363,3 +1363,101 @@ Use experiments to learn.
 Use the report to preserve the learning.
 Keep the submitted codebase clean.
 ```
+
+## Train/Dev Leakage Audit For Possible v4 Retrieval
+
+We discussed a possible v4 idea:
+
+```text
+v4 = v3 + retrieved similar train examples as few-shot guidance
+```
+
+The important condition is that retrieval can only use train data. It must not retrieve dev/test gold answers.
+
+I ran a quick local leakage audit between train and dev before deciding whether this is a reasonable future direction.
+
+Audit results:
+
+| Leakage level | Result | Interpretation |
+| --- | ---: | --- |
+| Exact `record_id` overlap | `0` | Good. No same record IDs appear in both train and dev. |
+| Exact document/context hash overlap | `0` | Good. No exact same `pre_text + table + post_text` record content appears in both splits. |
+| Same base PDF/page overlap | `0` | Good. No same `.../page_x.pdf` appears in both train and dev. |
+| Same company-year overlap | `144` company-year pairs | Related companies/years appear across different pages. This is not direct leakage, but train and dev are not fully independent by issuer/year. |
+| Exact question text overlap | `180` question strings | Significant template reuse. Many are generic follow-ups such as `and in 2013?`. |
+| Exact question + executed answer overlap | `5` | Very small. Mostly generic questions with coincidentally same numeric answers. |
+| Normalized question signature overlap | `161` | Strong operation/template overlap after normalizing years and numbers. |
+| Dev turns with near train question Jaccard >= `0.85` | `506 / 1490` | Many dev questions have near-identical train wording patterns. |
+
+Judgement:
+
+```text
+No clear data leakage at the document or answer level.
+But there is strong question-template overlap between train and dev.
+```
+
+This means retrieved train examples could be useful for v4 because many dev questions share reasoning patterns with train questions, such as:
+
+- percentage change
+- part / total ratio
+- difference between years
+- follow-up references such as `that amount`
+- clean final-answer formatting
+
+However, the method needs strict guardrails:
+
+```text
+Retrieve only from train.
+Retrieve by question/pattern similarity, not by answer.
+Use examples as reasoning-format guidance only.
+Current answer must still come from the current record.
+Never copy numbers from retrieved examples.
+Do not retrieve from dev/test labels.
+```
+
+Fair judgement:
+
+```text
+v4 train-example retrieval is feasible and potentially beneficial.
+It is not direct leakage if implemented carefully.
+It should be treated as a future extension or stretch experiment after v3 evaluation.
+```
+
+Risk:
+
+```text
+Retrieved examples can distract the model if they are superficially similar but require a different operation.
+Including gold answers from train is acceptable as few-shot demonstration, but must be documented clearly.
+The prompt must explicitly say examples are patterns only and all current numbers must come from the current record.
+```
+
+## Paper Pain Points And Our Responses
+
+This table maps the main paper/ConvFinQA pain points to the relevant paper locations and our current response.
+
+Source paper: `https://arxiv.org/pdf/2210.03849`
+
+| Paper / ConvFinQA pain point | Paper reference | Our response |
+| --- | --- | --- |
+| Financial QA needs document grounding over text + tables | Section 3 defines the input as financial report textual content `T` plus structured table `B`, lines 160-168. | v1 loads the selected record's `pre_text`, table, and `post_text`. |
+| Later questions depend on conversation history | Section 3 says later questions may depend on previous questions, lines 161-168; Figure 1 also shows each question may depend on previous questions, lines 47-61. | All versions pass previous Q/A turns as conversation history. |
+| Questions include both direct number lookup and calculations | Dataset construction says users ask surface-content questions, calculation questions, and sequential combinations, lines 181-188. | Prompt asks for `Target`, `Values`, `Operation`, `Final answer`, and `Calculation`. |
+| Need reasoning programs / execution accuracy | Section 3 says the target is to generate a reasoning program and evaluate execution result/program equivalence, lines 166-178. | We do not generate full DSL programs, but strict evaluation compares parsed answers against `executed_answers`. |
+| Evidence retrieval matters | FinQANet retrieves supporting facts before program generation; the paper reports top-3 fact recall and concatenates retrieved facts with conversation context, lines 437-444. | v2/v3 add record-local evidence selection with snippets + LLM reranking. |
+| Gold supporting facts improve performance | Table 3 includes `FinQANet-Gold` and notes using gold supporting facts, lines 431-436. | Supports our intuition that better evidence can help, though we use predicted/local evidence, not gold facts. |
+| Number-selection questions are easier than program questions | Table 4 shows number-selection questions at 82.54 Exe Acc vs program questions at 62.14, lines 456-465. | Our analysis reports the same breakdown style and separates number selection vs program questions. |
+| Hybrid conversations and later turns are harder | Table 4 and Figure 5 discussion say hybrid conversations, especially second part, and later turns are harder, lines 458-479. | We report simple/hybrid/turn-index breakdowns and preserve model history during runs. |
+| Missing facts / wrong values / wrong math are key errors | Analysis says lack of domain knowledge leads to missing retrieval facts, wrong value selections, and wrong mathematical generations, lines 491-496. | v2 targets wrong evidence/value selection; v3 targets suspicious calculation/final-answer issues. |
+| Long reasoning chains cause propagation errors | Paper says later turns with longer dependencies are difficult, and if any turn is wrong, later turns have little chance, lines 497-503. | We observed propagation in examples and added v3 retry checks, but this remains only partially solved. |
+| Full report in prompt may be unrealistic for prompting methods | Section 6 says directly injecting the full financial report into GPT-3 prompt is unrealistic due to length, lines 510-519. | Our dataset records are small enough for this prototype, but v2 evidence selection is a lightweight move toward retriever-generator design. |
+| Prompting/few-shot methods can mimic examples or ignore context | Paper says GPT-3 may mimic exemplars or reason from general-domain knowledge instead of actual context, lines 653-666. | This supports our decision to remove the few-shot prompt from v3 and prefer evidence + verification. |
+| GPT-style models struggle with complex calculations | Paper notes GPT-3 struggles with complex calculations such as long digits and divisions, lines 637-646. | v3 adds lightweight verification; full symbolic/program execution remains future work. |
+| Current dataset does not cover all real-world conversations | Limitations say their construction mechanisms do not cover all real-world cases, lines 690-696. | We do not build open-ended chat without `record_id`; cross-record retrieval is future work. |
+
+Short conclusion:
+
+```text
+We directly address grounding, conversational history, strict executed-answer evaluation, and local evidence selection.
+We partially address numerical reasoning with answer-format checks and no-gold verification.
+We do not fully solve the paper's program-generation/symbolic-reasoning challenge.
+```

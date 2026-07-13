@@ -45,6 +45,26 @@ class AnswerVerificationTests(unittest.TestCase):
         self.assertTrue(result.should_retry)
         self.assertIn("expected to have an answer", result.reason or "")
 
+    def test_retries_final_answer_with_multiple_numbers(self) -> None:
+        result = verify_answer(
+            question="and what was that credit facility?",
+            answer="Final answer: a credit facility with an amount of 150 million scheduled to expire in August 2021.",
+            evidence_snippets=[_snippet("credit facility in the amount of $150 million scheduled to expire in August 2021")],
+        )
+
+        self.assertTrue(result.should_retry)
+        self.assertIn("multiple numbers", result.reason or "")
+
+    def test_retries_final_answer_with_extra_words(self) -> None:
+        result = verify_answer(
+            question="and what was that credit facility?",
+            answer="Final answer: 150 million",
+            evidence_snippets=[_snippet("credit facility in the amount of $150 million")],
+        )
+
+        self.assertTrue(result.should_retry)
+        self.assertIn("extra words", result.reason or "")
+
     def test_retries_missing_percent_sign_when_calculation_is_percent(self) -> None:
         result = verify_answer(
             question="what portion is related to performance guarantees?",
@@ -74,6 +94,39 @@ class AnswerVerificationTests(unittest.TestCase):
         self.assertTrue(result.should_retry)
         self.assertIn("divide total by part", result.reason or "")
 
+    def test_retries_zero_selection_when_non_zero_candidates_are_listed(self) -> None:
+        result = verify_answer(
+            question="what was the drawn amount from the credit facility that was set to expire in august 2021?",
+            answer=(
+                "Target: drawn amount from the credit facility\n"
+                "Values: cash borrowings = 0, letters of credit outstanding = 4.7\n"
+                "Operation: select cash borrowings\n"
+                "Final answer: 0"
+            ),
+            evidence_snippets=[
+                _snippet("there were no cash borrowings and $4.7 million of letters of credit outstanding under the credit facility"),
+            ],
+        )
+
+        self.assertTrue(result.should_retry)
+        self.assertIn("zero-valued candidate", result.reason or "")
+
+    def test_accepts_zero_selection_when_question_asks_for_selected_zero_label(self) -> None:
+        result = verify_answer(
+            question="what was the amount of cash borrowings?",
+            answer=(
+                "Target: amount of cash borrowings\n"
+                "Values: cash borrowings = 0, letters of credit outstanding = 4.7\n"
+                "Operation: select cash borrowings\n"
+                "Final answer: 0"
+            ),
+            evidence_snippets=[
+                _snippet("there were no cash borrowings and $4.7 million of letters of credit outstanding under the credit facility"),
+            ],
+        )
+
+        self.assertFalse(result.should_retry)
+
     def test_retries_final_answer_that_disagrees_with_operation(self) -> None:
         result = verify_answer(
             question="what was the difference?",
@@ -89,9 +142,15 @@ class AnswerVerificationTests(unittest.TestCase):
         self.assertIn("evaluates to about 78", result.reason or "")
 
     def test_retry_instruction_includes_reason_and_clean_final_answer_rule(self) -> None:
-        instruction = build_retry_instruction("The question asks for part / total.")
+        instruction = build_retry_instruction(
+            reason="The question asks for part / total.",
+            question="what was that credit facility?",
+        )
 
         self.assertIn("part / total", instruction)
+        self.assertIn("what was that credit facility?", instruction)
+        self.assertIn("Do not answer a previous turn", instruction)
+        self.assertIn("must contain only one comparable value", instruction)
         self.assertIn("Final answer", instruction)
 
 

@@ -75,8 +75,8 @@ def chat(
 
         try:
             answer = answerer.answer(record=record, history=history, question=message)
-            if show_evidence and version != AnswerVersion.V2:
-                rich_print("[yellow]--show-evidence requires --version v2 to select snippets.[/yellow]")
+            if show_evidence and version not in {AnswerVersion.V2, AnswerVersion.V3}:
+                rich_print("[yellow]--show-evidence requires --version v2 or v3 to select snippets.[/yellow]")
             if show_evidence and answer.evidence_snippets:
                 rich_print("[magenta][bold]selected evidence:[/bold][/magenta]")
                 for snippet in answer.evidence_snippets:

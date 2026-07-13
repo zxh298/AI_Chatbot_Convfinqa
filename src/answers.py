@@ -141,7 +141,7 @@ class OpenAIAnswerer:
         retry_messages = [
             *messages,
             {"role": "assistant", "content": response_text},
-            {"role": "user", "content": build_retry_instruction(verification.reason)},
+            {"role": "user", "content": build_retry_instruction(reason=verification.reason, question=question)},
         ]
         return self._request_chat_completion(retry_messages)
 

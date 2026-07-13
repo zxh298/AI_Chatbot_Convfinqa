@@ -58,6 +58,15 @@ class VerificationResult(BaseModel):
     reason: str | None = None
 
 
+class LabeledValue(BaseModel):
+    """One value listed by the model on its `Values:` line."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str
+    value: float
+
+
 def verify_answer(
     *,
     question: str,
@@ -68,6 +77,10 @@ def verify_answer(
     final_answer = _extract_final_answer(answer)
     if final_answer is None:
         return _retry("The answer did not include a clean `Final answer:` line.")
+
+    clean_final_reason = _find_unclean_final_answer_issue(final_answer)
+    if clean_final_reason is not None:
+        return _retry(clean_final_reason)
 
     if _is_refusal(answer):
         if _evidence_has_number(evidence_snippets):
@@ -82,6 +95,14 @@ def verify_answer(
             "The calculation appears to produce a percentage, but the final answer omits the percent sign.",
         )
 
+    competing_zero_reason = _find_competing_zero_selection_issue(
+        question=question,
+        answer=answer,
+        final_answer=final_answer,
+    )
+    if competing_zero_reason is not None:
+        return _retry(competing_zero_reason)
+
     denominator_reason = _find_denominator_issue(question=question, answer=answer)
     if denominator_reason is not None:
         return _retry(denominator_reason)
@@ -93,17 +114,23 @@ def verify_answer(
     return VerificationResult(should_retry=False)
 
 
-def build_retry_instruction(reason: str) -> str:
+def build_retry_instruction(reason: str, question: str) -> str:
     """Build the user message appended for the one v3 correction retry."""
     return "\n".join(
         [
             "Your previous answer may have a calculation or formatting issue.",
             f"Issue: {reason}",
             "",
+            "Current question to answer:",
+            question,
+            "",
             "Re-answer the same question using the selected record and relevant evidence.",
+            "Do not answer a previous turn unless the current question explicitly asks for that previous value.",
             "Do not use outside information.",
+            "The `Final answer:` line must contain only one comparable value, such as `150` or `3.1%`; do not include words, units, dates, or explanation on that line.",
             "Pay special attention to:",
             "- choosing part / total for portion-of-total questions unless the question clearly says otherwise",
+            "- not selecting a zero-valued candidate when another listed non-zero candidate better matches the question target",
             "- percentage scale and percent signs",
             "- operation direction, denominator choice, and final-answer consistency",
             "- returning exactly one clean `Final answer: <value>` line",
@@ -126,6 +153,23 @@ def _is_refusal(answer: str) -> bool:
     return bool(_REFUSAL_PATTERN.search(answer))
 
 
+def _find_unclean_final_answer_issue(final_answer: str) -> str | None:
+    numbers = _NUMBER_PATTERN.findall(final_answer)
+    if len(numbers) > 1:
+        return (
+            "The `Final answer:` line contains multiple numbers or extra context. "
+            "It should contain only one comparable value, with no dates, units, or explanation."
+        )
+
+    if numbers and re.search(r"[a-zA-Z]", final_answer.replace("%", "")):
+        return (
+            "The `Final answer:` line contains extra words. "
+            "It should contain only the requested value, such as `150` or `3.1%`."
+        )
+
+    return None
+
+
 def _evidence_has_number(evidence_snippets: Sequence[EvidenceSnippet]) -> bool:
     return any(_NUMBER_PATTERN.search(snippet.text) for snippet in evidence_snippets)
 
@@ -138,6 +182,39 @@ def _has_percent_scale_mismatch(*, question: str, answer: str, final_answer: str
     calculation = _line_value(answer, "calculation") or ""
     operation = _line_value(answer, "operation") or ""
     return "%" in calculation or "* 100" in calculation or "*100" in calculation or "* 100" in operation or "*100" in operation
+
+
+def _find_competing_zero_selection_issue(*, question: str, answer: str, final_answer: str) -> str | None:
+    final_value = _parse_number(final_answer)
+    if final_value is None or not math.isclose(final_value, 0.0, abs_tol=1e-9):
+        return None
+
+    operation = (_line_value(answer, "operation") or "").lower()
+    if not operation.startswith("select"):
+        return None
+
+    values = _labeled_values(answer)
+    selected_label = _selected_label_from_operation(operation)
+    if selected_label is None:
+        return None
+
+    selected_value = _best_matching_value(selected_label, values)
+    if selected_value is None or not math.isclose(selected_value.value, 0.0, abs_tol=1e-9):
+        return None
+
+    non_zero_candidates = [value for value in values if not math.isclose(value.value, 0.0, abs_tol=1e-9)]
+    if not non_zero_candidates:
+        return None
+
+    question_text = question.lower()
+    selected_label_tokens = _label_tokens(selected_value.label)
+    if selected_label_tokens and selected_label_tokens.issubset(_label_tokens(question_text)):
+        return None
+
+    return (
+        "The answer selected a zero-valued candidate even though the `Values:` line lists non-zero alternatives. "
+        "Re-answer by choosing the value whose label best matches the question target, unless the question explicitly asks for the zero-valued label."
+    )
 
 
 def _find_denominator_issue(*, question: str, answer: str) -> str | None:
@@ -202,16 +279,43 @@ def _line_value(answer: str, label: str) -> str | None:
 
 
 def _values_by_number(answer: str) -> dict[float, str]:
+    return {value.value: value.label.lower() for value in _labeled_values(answer)}
+
+
+def _labeled_values(answer: str) -> list[LabeledValue]:
     values_line = _line_value(answer, "values") or ""
-    values: dict[float, str] = {}
+    values: list[LabeledValue] = []
     for part in re.split(r"[,;]", values_line):
         if "=" not in part:
             continue
         label, raw_value = part.rsplit("=", 1)
         value = _parse_number(raw_value)
         if value is not None:
-            values[value] = label.strip().lower()
+            values.append(LabeledValue(label=label.strip().lower(), value=value))
     return values
+
+
+def _selected_label_from_operation(operation: str) -> str | None:
+    match = re.search(r"\bselect\b\s+(?P<label>.+)", operation, re.IGNORECASE)
+    if match is None:
+        return None
+    return match.group("label").strip().lower()
+
+
+def _best_matching_value(label: str, values: Sequence[LabeledValue]) -> LabeledValue | None:
+    label_tokens = _label_tokens(label)
+    best_value: LabeledValue | None = None
+    best_overlap = 0
+    for value in values:
+        overlap = len(label_tokens & _label_tokens(value.label))
+        if overlap > best_overlap:
+            best_overlap = overlap
+            best_value = value
+    return best_value
+
+
+def _label_tokens(text: str) -> set[str]:
+    return set(re.findall(r"[a-zA-Z][a-zA-Z0-9]+", text.lower()))
 
 
 def _extract_division_operands(operation: str) -> tuple[float | None, float | None]:
