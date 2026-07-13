@@ -81,6 +81,10 @@ class TurnRunResult(BaseModel):
     prediction: str
 
 
+TurnResultCallback = Callable[[TurnRunResult], None]
+"""Optional hook used by the CLI to checkpoint completed turns immediately."""
+
+
 class BaselineRunSummary(BaseModel):
     """Aggregate result for a model run before scoring."""
 
@@ -163,6 +167,7 @@ def run_record(
     record: ConvFinQARecord,
     answer_fn: AnswerFn,
     max_turns_per_record: int | None = None,
+    on_turn_result: TurnResultCallback | None = None,
 ) -> list[TurnRunResult]:
     """Replay one record's turns sequentially and return raw model answers."""
     # History is reset per record, matching the interactive chat behavior.
@@ -175,14 +180,15 @@ def run_record(
     for turn_index in range(turn_count):
         question = record.dialogue.conv_questions[turn_index]
         prediction = answer_fn(record, history, question)
-        results.append(
-            TurnRunResult(
-                record_id=record.id,
-                turn_index=turn_index,
-                question=question,
-                prediction=prediction,
-            ),
+        result = TurnRunResult(
+            record_id=record.id,
+            turn_index=turn_index,
+            question=question,
+            prediction=prediction,
         )
+        results.append(result)
+        if on_turn_result is not None:
+            on_turn_result(result)
         history.append(ChatTurn(user=question, assistant=prediction))
 
     return results
@@ -384,6 +390,22 @@ def write_run_jsonl(summary: BaselineRunSummary, output_path: Path) -> None:
     with output_path.open("w") as file:
         for result in summary.results:
             file.write(json.dumps(result.model_dump()) + "\n")
+
+
+def append_run_result_jsonl(result: TurnRunResult, output_path: Path) -> None:
+    """Append one completed raw turn result for crash-resistant runs."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("a") as file:
+        file.write(json.dumps(result.model_dump()) + "\n")
+        file.flush()
+
+
+def write_selected_records_jsonl(records: Sequence[ConvFinQARecord], output_path: Path) -> None:
+    """Write the selected record IDs/order used by a reproducible batch run."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w") as file:
+        for index, record in enumerate(records):
+            file.write(json.dumps({"index": index, "record_id": record.id}) + "\n")
 
 
 def load_run_jsonl(results_path: Path) -> list[TurnRunResult]:

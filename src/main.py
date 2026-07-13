@@ -7,7 +7,9 @@ and evaluation logic should live in their own modules.
 """
 
 import os
+import threading
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional
 
@@ -100,6 +102,10 @@ def run_baseline(
     random_seed: Optional[int] = typer.Option(None, help="Random seed for reproducible record sampling."),
     model: str = typer.Option("gpt-4o", help="OpenAI model to use."),
     output_path: Path = typer.Option(..., help="JSONL path for raw turn-level model outputs."),
+    selected_records_path: Optional[Path] = typer.Option(
+        None,
+        help="Optional JSONL path for the selected record IDs/order. Defaults to <output>_records.jsonl.",
+    ),
     version: AnswerVersion = typer.Option(
         AnswerVersion.V1,
         "--version",
@@ -133,28 +139,36 @@ def run_baseline(
 
     try:
         selected_records = evaluation.select_records(records, max_records=max_records, random_seed=random_seed)
-        # workers > 1 runs records concurrently, but each record still
-        # replays its turns in order to preserve conversational dependencies.
-        summary = evaluation.run_records(
-            records=selected_records,
-            answer_fn=answer_question,
-            max_records=max_records,
-            max_turns_per_record=max_turns,
-        ) if workers == 1 else evaluation.run_records_parallel(
-            records=selected_records,
-            answer_fn=answer_question,
-            max_records=max_records,
-            max_turns_per_record=max_turns,
-            workers=workers,
-        )
+        selected_records_path = selected_records_path or _selected_records_path_for(output_path)
+        evaluation.write_selected_records_jsonl(selected_records, selected_records_path)
+        _reset_output_file(output_path)
+
+        # Workers > 1 runs records concurrently, but each record still replays
+        # turns in order to preserve conversational dependencies. Turn rows are
+        # appended immediately so a mid-run API failure does not lose everything.
+        if workers == 1:
+            summary = _run_records_with_checkpoints(
+                records=selected_records,
+                answer_fn=answer_question,
+                output_path=output_path,
+                max_turns_per_record=max_turns,
+            )
+        else:
+            summary = _run_records_parallel_with_checkpoints(
+                records=selected_records,
+                answer_fn=answer_question,
+                output_path=output_path,
+                max_turns_per_record=max_turns,
+                workers=workers,
+            )
     except APIError as e:
         rich_print(f"[red]Error from OpenAI API: {e}")
         logger.exception("OpenAI API error during batch run")
         raise typer.Exit(code=1) from e
 
-    evaluation.write_run_jsonl(summary, output_path)
     logger.info("Saved raw predictions: %s (%s turns)", output_path, summary.total_turns)
     rich_print(f"[bold]{split} run complete:[/bold] {summary.total_turns} turns")
+    rich_print(f"[green]Saved selected record IDs to:[/green] {selected_records_path}")
     rich_print(f"[green]Saved raw turn-level predictions to:[/green] {output_path}")
 
     _print_run_results(summary.results)
@@ -217,6 +231,85 @@ def _records_for_split(
     rich_print("[red]Error: --split must be 'train' or 'dev'[/red]")
     logger.warning("Invalid split requested: %s", split)
     raise typer.Exit(code=1)
+
+
+def _run_records_with_checkpoints(
+    records: Sequence[ConvFinQARecord],
+    answer_fn: evaluation.AnswerFn,
+    output_path: Path,
+    max_turns_per_record: int | None,
+) -> evaluation.BaselineRunSummary:
+    """Run records sequentially while appending each completed turn."""
+    results: list[evaluation.TurnRunResult] = []
+    total_records = len(records)
+
+    for completed_records, record in enumerate(records, start=1):
+        record_results = evaluation.run_record(
+            record=record,
+            answer_fn=answer_fn,
+            max_turns_per_record=max_turns_per_record,
+            on_turn_result=lambda result: evaluation.append_run_result_jsonl(result, output_path),
+        )
+        results.extend(record_results)
+        _print_record_progress(completed_records, total_records)
+
+    return evaluation.summarize_run_results(results)
+
+
+def _run_records_parallel_with_checkpoints(
+    records: Sequence[ConvFinQARecord],
+    answer_fn: evaluation.AnswerFn,
+    output_path: Path,
+    max_turns_per_record: int | None,
+    workers: int,
+) -> evaluation.BaselineRunSummary:
+    """Run records concurrently, append completed turns, and print progress."""
+    results_by_record: dict[str, list[evaluation.TurnRunResult]] = {}
+    write_lock = threading.Lock()
+    total_records = len(records)
+
+    def save_turn(result: evaluation.TurnRunResult) -> None:
+        with write_lock:
+            evaluation.append_run_result_jsonl(result, output_path)
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(
+                evaluation.run_record,
+                record,
+                answer_fn,
+                max_turns_per_record,
+                save_turn,
+            ): record
+            for record in records
+        }
+        for completed_records, future in enumerate(as_completed(futures), start=1):
+            record = futures[future]
+            results_by_record[record.id] = future.result()
+            _print_record_progress(completed_records, total_records)
+
+    ordered_results = [
+        result
+        for record in records
+        for result in results_by_record.get(record.id, [])
+    ]
+    return evaluation.summarize_run_results(ordered_results)
+
+
+def _reset_output_file(output_path: Path) -> None:
+    """Create an empty checkpoint file before starting a fresh run."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("")
+
+
+def _selected_records_path_for(output_path: Path) -> Path:
+    """Default sidecar path for the selected record IDs/order."""
+    return output_path.with_name(f"{output_path.stem}_records.jsonl")
+
+
+def _print_record_progress(completed_records: int, total_records: int) -> None:
+    """Print record-level progress for long API runs."""
+    rich_print(f"[cyan]progress:[/cyan] {completed_records}/{total_records} records completed")
 
 
 def _print_breakdown(rows: Sequence[evaluation.BreakdownRow]) -> None:

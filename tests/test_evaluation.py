@@ -11,6 +11,7 @@ from pathlib import Path
 
 from src.data import load_dataset
 from src.evaluation import (
+    append_run_result_jsonl,
     build_table4_breakdown,
     evaluate_run_results,
     load_results_jsonl,
@@ -20,6 +21,7 @@ from src.evaluation import (
     select_records,
     write_results_jsonl,
     write_run_jsonl,
+    write_selected_records_jsonl,
 )
 from src.models import ConvFinQARecord
 from src.prompts import ChatTurn
@@ -173,6 +175,37 @@ class BaselineEvaluationTests(unittest.TestCase):
         self.assertIn("prediction", saved_rows[0])
         self.assertNotIn("is_correct", saved_rows[0])
         self.assertNotIn("gold_executed_answer", saved_rows[0])
+
+    def test_append_run_result_jsonl_saves_each_completed_turn(self) -> None:
+        dataset = load_dataset()
+        record = dataset.train[0]
+        first_result = run_records(
+            records=[record],
+            answer_fn=lambda _record, _history, _question: "Final answer: 1",
+            max_records=1,
+            max_turns_per_record=1,
+        ).results[0]
+        second_result = first_result.model_copy(update={"turn_index": 1, "prediction": "Final answer: 2"})
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "run.jsonl"
+            append_run_result_jsonl(first_result, output_path)
+            append_run_result_jsonl(second_result, output_path)
+            loaded_results = load_run_jsonl(output_path)
+
+        self.assertEqual([result.prediction for result in loaded_results], ["Final answer: 1", "Final answer: 2"])
+
+    def test_write_selected_records_jsonl_saves_sample_order(self) -> None:
+        dataset = load_dataset()
+        records = select_records(dataset.train, max_records=3, random_seed=42)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "records.jsonl"
+            write_selected_records_jsonl(records, output_path)
+            saved_rows = [json.loads(line) for line in output_path.read_text().splitlines()]
+
+        self.assertEqual([row["index"] for row in saved_rows], [0, 1, 2])
+        self.assertEqual([row["record_id"] for row in saved_rows], [record.id for record in records])
 
     def test_evaluate_run_results_uses_strict_executed_gold_for_correctness(self) -> None:
         dataset = load_dataset()
