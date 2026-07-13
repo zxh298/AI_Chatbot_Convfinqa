@@ -191,6 +191,8 @@ def format_reasoning_examples(examples: Sequence[ReasoningExample]) -> str:
     lines = [
         "Similar solved train examples:",
         "Use these only as reasoning-pattern hints. Do not copy their numbers.",
+        "Examples are ranked by similarity; Example 1 is the most relevant.",
+        "If examples suggest different reasoning patterns, follow the higher-ranked example.",
     ]
     for index, example in enumerate(examples, start=1):
         lines.extend(

@@ -74,6 +74,8 @@ class ExampleRetrievalTests(unittest.TestCase):
 
         self.assertIn("Similar solved train examples:", formatted)
         self.assertIn("Do not copy their numbers", formatted)
+        self.assertIn("Example 1 is the most relevant", formatted)
+        self.assertIn("follow the higher-ranked example", formatted)
         self.assertIn("multiply(12.5, const_1000)", formatted)
 
     def test_follow_up_history_contributes_to_retrieval(self) -> None:
