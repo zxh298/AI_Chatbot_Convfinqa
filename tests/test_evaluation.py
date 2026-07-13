@@ -13,9 +13,11 @@ from src.data import load_dataset
 from src.evaluation import (
     append_run_result_jsonl,
     build_table4_breakdown,
+    deduplicate_run_results,
     evaluate_run_results,
     load_results_jsonl,
     load_run_jsonl,
+    load_selected_record_ids_jsonl,
     run_records,
     run_records_parallel,
     select_records,
@@ -203,9 +205,27 @@ class BaselineEvaluationTests(unittest.TestCase):
             output_path = Path(tmpdir) / "records.jsonl"
             write_selected_records_jsonl(records, output_path)
             saved_rows = [json.loads(line) for line in output_path.read_text().splitlines()]
+            loaded_record_ids = load_selected_record_ids_jsonl(output_path)
 
         self.assertEqual([row["index"] for row in saved_rows], [0, 1, 2])
         self.assertEqual([row["record_id"] for row in saved_rows], [record.id for record in records])
+        self.assertEqual(loaded_record_ids, [record.id for record in records])
+
+    def test_deduplicate_run_results_keeps_latest_duplicate_turn(self) -> None:
+        dataset = load_dataset()
+        record = dataset.train[0]
+        base_result = run_records(
+            records=[record],
+            answer_fn=lambda _record, _history, _question: "old",
+            max_records=1,
+            max_turns_per_record=1,
+        ).results[0]
+        latest_result = base_result.model_copy(update={"prediction": "new"})
+
+        deduped = deduplicate_run_results([base_result, latest_result])
+
+        self.assertEqual(len(deduped), 1)
+        self.assertEqual(deduped[0].prediction, "new")
 
     def test_evaluate_run_results_uses_strict_executed_gold_for_correctness(self) -> None:
         dataset = load_dataset()

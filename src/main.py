@@ -95,7 +95,7 @@ def chat(
 
 
 @app.command("run")
-def run_baseline(
+def run(
     split: str = typer.Option("dev", help="Dataset split to evaluate: train or dev."),
     max_records: Optional[int] = typer.Option(None, help="Optional maximum number of records to run."),
     max_turns: Optional[int] = typer.Option(None, help="Optional maximum turns per record."),
@@ -106,6 +106,7 @@ def run_baseline(
         None,
         help="Optional JSONL path for the selected record IDs/order. Defaults to <output>_records.jsonl.",
     ),
+    resume: bool = typer.Option(False, "--resume", help="Resume a checkpointed run by rerunning only incomplete records."),
     version: AnswerVersion = typer.Option(
         AnswerVersion.V1,
         "--version",
@@ -138,24 +139,48 @@ def run_baseline(
         return answerer.answer(record, history, question).text
 
     try:
-        selected_records = evaluation.select_records(records, max_records=max_records, random_seed=random_seed)
         selected_records_path = selected_records_path or _selected_records_path_for(output_path)
-        evaluation.write_selected_records_jsonl(selected_records, selected_records_path)
-        _reset_output_file(output_path)
+        selected_records = _selected_records_for_run(
+            records=records,
+            selected_records_path=selected_records_path,
+            max_records=max_records,
+            random_seed=random_seed,
+            resume=resume,
+        )
+        if not resume:
+            evaluation.write_selected_records_jsonl(selected_records, selected_records_path)
+            _reset_output_file(output_path)
+        elif not output_path.exists():
+            raise typer.BadParameter(f"--resume requires existing output file: {output_path}")
+
+        records_to_run = (
+            _incomplete_records_for_resume(
+                selected_records=selected_records,
+                output_path=output_path,
+                max_turns_per_record=max_turns,
+            )
+            if resume
+            else selected_records
+        )
+
+        if resume:
+            rich_print(
+                f"[cyan]resume:[/cyan] {len(records_to_run)}/{len(selected_records)} selected records are incomplete and will be rerun",
+            )
 
         # Workers > 1 runs records concurrently, but each record still replays
         # turns in order to preserve conversational dependencies. Turn rows are
         # appended immediately so a mid-run API failure does not lose everything.
         if workers == 1:
             summary = _run_records_with_checkpoints(
-                records=selected_records,
+                records=records_to_run,
                 answer_fn=answer_question,
                 output_path=output_path,
                 max_turns_per_record=max_turns,
             )
         else:
             summary = _run_records_parallel_with_checkpoints(
-                records=selected_records,
+                records=records_to_run,
                 answer_fn=answer_question,
                 output_path=output_path,
                 max_turns_per_record=max_turns,
@@ -231,6 +256,59 @@ def _records_for_split(
     rich_print("[red]Error: --split must be 'train' or 'dev'[/red]")
     logger.warning("Invalid split requested: %s", split)
     raise typer.Exit(code=1)
+
+
+def _selected_records_for_run(
+    records: Sequence[ConvFinQARecord],
+    selected_records_path: Path,
+    max_records: int | None,
+    random_seed: int | None,
+    resume: bool,
+) -> list[ConvFinQARecord]:
+    """Select records for a fresh run or load the original selection on resume."""
+    records_by_id = {record.id: record for record in records}
+    if not resume:
+        return evaluation.select_records(records, max_records=max_records, random_seed=random_seed)
+
+    if not selected_records_path.exists():
+        raise typer.BadParameter(f"--resume requires existing selected records file: {selected_records_path}")
+
+    selected_ids = evaluation.load_selected_record_ids_jsonl(selected_records_path)
+    missing_ids = [record_id for record_id in selected_ids if record_id not in records_by_id]
+    if missing_ids:
+        raise typer.BadParameter(f"Selected records file contains IDs outside --split: {missing_ids[:3]}")
+    return [records_by_id[record_id] for record_id in selected_ids]
+
+
+def _incomplete_records_for_resume(
+    selected_records: Sequence[ConvFinQARecord],
+    output_path: Path,
+    max_turns_per_record: int | None,
+) -> list[ConvFinQARecord]:
+    """Return selected records that do not yet have all expected turn rows."""
+    completed_turns_by_record: dict[str, set[int]] = {}
+    for result in evaluation.load_run_jsonl(output_path):
+        completed_turns_by_record.setdefault(result.record_id, set()).add(result.turn_index)
+
+    incomplete_records: list[ConvFinQARecord] = []
+    for record in selected_records:
+        expected_turns = _expected_turn_count(record, max_turns_per_record)
+        completed_turns = completed_turns_by_record.get(record.id, set())
+        if any(turn_index not in completed_turns for turn_index in range(expected_turns)):
+            incomplete_records.append(record)
+    return incomplete_records
+
+
+def _expected_turn_count(record: ConvFinQARecord, max_turns_per_record: int | None) -> int:
+    """Expected evaluated turns for one record under the current run options."""
+    turn_count = min(
+        len(record.dialogue.conv_questions),
+        len(record.dialogue.conv_answers),
+        len(record.dialogue.executed_answers),
+    )
+    if max_turns_per_record is None:
+        return turn_count
+    return min(turn_count, max_turns_per_record)
 
 
 def _run_records_with_checkpoints(

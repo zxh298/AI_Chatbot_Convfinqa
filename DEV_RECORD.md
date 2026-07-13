@@ -1423,6 +1423,33 @@ It is not direct leakage if implemented carefully.
 It should be treated as a future extension or stretch experiment after v3 evaluation.
 ```
 
+Why v4 may help:
+
+```text
+ConvFinQA has repeated reasoning templates.
+The leakage audit found strong train/dev question-template overlap without exact document overlap.
+This means train examples can teach operation patterns without giving away the current dev answer.
+```
+
+Useful patterns that retrieved train examples may help with:
+
+| Pattern | Why retrieved examples may help |
+| --- | --- |
+| Part / total ratios | Similar examples can reinforce using `part / total`, not `total / part`. |
+| Percentage change | Similar examples can show whether the denominator should be the earlier value, later value, or referenced total. |
+| Difference direction | Similar examples can show the expected order for "change from X to Y" or "difference between these values." |
+| Follow-up references | Similar examples can show how to resolve `that amount`, `this value`, or `during that period` from previous turns. |
+| Clean final-answer format | Examples can reinforce `Target`, `Values`, `Operation`, and `Final answer:` structure. |
+| Repeated financial phrasing | Similar examples can help interpret recurring terms such as credit facility, outstanding, carrying value, fair value, and amortization. |
+
+Why this is different from leaking answers:
+
+```text
+The retrieved train examples provide reasoning patterns.
+The current answer still has to be computed from the current record's evidence.
+The prompt should explicitly say not to copy numbers from examples.
+```
+
 Risk:
 
 ```text

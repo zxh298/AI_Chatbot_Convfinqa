@@ -313,7 +313,7 @@ def evaluate_run_results(
     records_by_id = {record.id: record for record in [*dataset.train, *dataset.dev]}
     evaluation_results: list[TurnEvaluationResult] = []
 
-    for run_result in run_results:
+    for run_result in deduplicate_run_results(run_results):
         record = records_by_id[run_result.record_id]
         turn_index = run_result.turn_index
         gold_conv_answer = record.dialogue.conv_answers[turn_index]
@@ -363,6 +363,18 @@ def summarize_results(results: Sequence[TurnEvaluationResult]) -> BaselineEvalua
     )
 
 
+def deduplicate_run_results(run_results: Sequence[TurnRunResult]) -> list[TurnRunResult]:
+    """Keep the latest row for each record/turn while preserving first-seen order."""
+    ordered_keys: list[tuple[str, int]] = []
+    by_key: dict[tuple[str, int], TurnRunResult] = {}
+    for result in run_results:
+        key = (result.record_id, result.turn_index)
+        if key not in by_key:
+            ordered_keys.append(key)
+        by_key[key] = result
+    return [by_key[key] for key in ordered_keys]
+
+
 def select_records(
     records: Sequence[ConvFinQARecord],
     max_records: int | None = None,
@@ -406,6 +418,15 @@ def write_selected_records_jsonl(records: Sequence[ConvFinQARecord], output_path
     with output_path.open("w") as file:
         for index, record in enumerate(records):
             file.write(json.dumps({"index": index, "record_id": record.id}) + "\n")
+
+
+def load_selected_record_ids_jsonl(records_path: Path) -> list[str]:
+    """Load record IDs from a selected-record sidecar file."""
+    return [
+        json.loads(line)["record_id"]
+        for line in records_path.read_text().splitlines()
+        if line.strip()
+    ]
 
 
 def load_run_jsonl(results_path: Path) -> list[TurnRunResult]:

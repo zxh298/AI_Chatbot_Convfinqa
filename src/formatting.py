@@ -14,7 +14,7 @@ from src.models import ConvFinQARecord, TableValue
 def format_table(table: dict[str, dict[str, TableValue]]) -> str:
     """Format the column-oriented dataset table as Markdown."""
     columns = list(table.keys())
-    row_labels = _ordered_row_labels(table)
+    row_labels = ordered_table_row_labels(table)
 
     header = ["metric", *columns]
     rows = [header, ["---", *["---"] * len(columns)]]
@@ -23,7 +23,7 @@ def format_table(table: dict[str, dict[str, TableValue]]) -> str:
         row = [row_label]
         for column in columns:
             value = table[column].get(row_label, "")
-            row.append(_format_value(value))
+            row.append(format_table_value(value))
         rows.append(row)
 
     return "\n".join(_format_markdown_row(row) for row in rows)
@@ -41,7 +41,7 @@ def format_record_context(record: ConvFinQARecord) -> str:
     )
 
 
-def _ordered_row_labels(table: dict[str, dict[str, TableValue]]) -> list[str]:
+def ordered_table_row_labels(table: dict[str, dict[str, TableValue]]) -> list[str]:
     """Recover row order from the first appearance across table columns."""
     row_labels: list[str] = []
     seen: set[str] = set()
@@ -53,7 +53,7 @@ def _ordered_row_labels(table: dict[str, dict[str, TableValue]]) -> list[str]:
     return row_labels
 
 
-def _format_value(value: TableValue | str) -> str:
+def format_table_value(value: TableValue | str) -> str:
     """Keep numbers compact while preserving non-numeric table cells."""
     if isinstance(value, float):
         return f"{value:g}"

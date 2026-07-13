@@ -15,7 +15,8 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
 
-from src.models import ConvFinQARecord, TableValue
+from src.formatting import format_table_value, ordered_table_row_labels
+from src.models import ConvFinQARecord
 
 if TYPE_CHECKING:
     from src.prompts import ChatTurn
@@ -224,9 +225,9 @@ def _build_table_snippets(record: ConvFinQARecord, start_index: int) -> list[Evi
     snippets: list[EvidenceSnippet] = []
     columns = list(record.doc.table.keys())
 
-    for row_index, row_label in enumerate(_ordered_row_labels(record.doc.table), start=start_index):
+    for row_index, row_label in enumerate(ordered_table_row_labels(record.doc.table), start=start_index):
         values = [
-            f"{column}: {_format_value(record.doc.table[column].get(row_label, ''))}"
+            f"{column}: {format_table_value(record.doc.table[column].get(row_label, ''))}"
             for column in columns
             if row_label in record.doc.table[column]
         ]
@@ -339,23 +340,6 @@ def _format_history(history: Sequence[ChatTurn]) -> str:
         f"Q: {turn.user}\nA: {turn.assistant}"
         for turn in history
     )
-
-
-def _ordered_row_labels(table: dict[str, dict[str, TableValue]]) -> list[str]:
-    row_labels: list[str] = []
-    seen: set[str] = set()
-    for column_values in table.values():
-        for row_label in column_values:
-            if row_label not in seen:
-                seen.add(row_label)
-                row_labels.append(row_label)
-    return row_labels
-
-
-def _format_value(value: TableValue | str) -> str:
-    if isinstance(value, float):
-        return f"{value:g}"
-    return str(value)
 
 
 def _normalize_space(text: str) -> str:
