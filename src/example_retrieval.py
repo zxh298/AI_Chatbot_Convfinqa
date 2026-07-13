@@ -150,7 +150,7 @@ def retrieve_reasoning_examples(
     limit: int = 3,
 ) -> list[ReasoningExample]:
     """Return similar train examples while excluding the current record."""
-    current_document_key = _document_key(current_record_id)
+    current_document_key = record_document_key(current_record_id)
     query_text = " ".join(
         [
             *[
@@ -166,7 +166,7 @@ def retrieve_reasoning_examples(
 
     scored: list[tuple[int, int, ExampleIndexItem]] = []
     for index_position, item in enumerate(index):
-        if _document_key(item.example.record_id) == current_document_key:
+        if record_document_key(item.example.record_id) == current_document_key:
             continue
         if not _passes_pattern_filter(item, query_pattern_tokens):
             continue
@@ -244,7 +244,7 @@ def _tokens(text: str) -> set[str]:
     }
 
 
-def _document_key(record_id: str) -> str:
+def record_document_key(record_id: str) -> str:
     """Normalize Single/Double variants to the underlying PDF page."""
     if "_" in record_id:
         _prefix, record_id = record_id.split("_", 1)

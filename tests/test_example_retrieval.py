@@ -10,6 +10,7 @@ from src.answers import AnswerResponse
 from src.example_retrieval import (
     build_example_index,
     format_reasoning_examples,
+    record_document_key,
     retrieve_reasoning_examples,
 )
 from src.models import ConvFinQARecord, Dialogue, Document, Features
@@ -52,6 +53,12 @@ class ExampleRetrievalTests(unittest.TestCase):
         self.assertEqual(examples[0].record_id, "Double_AMT/2010/page_111.pdf")
         self.assertNotIn(current_record.id, {example.record_id for example in examples})
         self.assertNotIn(unrelated_record.id, {example.record_id for example in examples})
+
+    def test_record_document_key_groups_single_and_double_page_variants(self) -> None:
+        self.assertEqual(
+            record_document_key("Double_ETR/2016/page_424.pdf"),
+            record_document_key("Single_ETR/2016/page_424.pdf-3"),
+        )
 
     def test_format_reasoning_examples_warns_not_to_copy_numbers(self) -> None:
         record = _make_record(

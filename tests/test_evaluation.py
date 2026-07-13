@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from src.answers import AnswerVersion
 from src.data import load_dataset
 from src.evaluation import (
     append_run_result_jsonl,
@@ -25,6 +26,8 @@ from src.evaluation import (
     write_run_jsonl,
     write_selected_records_jsonl,
 )
+from src.example_retrieval import record_document_key
+from src.main import _example_records_for_run
 from src.models import ConvFinQARecord
 from src.prompts import ChatTurn
 
@@ -210,6 +213,33 @@ class BaselineEvaluationTests(unittest.TestCase):
         self.assertEqual([row["index"] for row in saved_rows], [0, 1, 2])
         self.assertEqual([row["record_id"] for row in saved_rows], [record.id for record in records])
         self.assertEqual(loaded_record_ids, [record.id for record in records])
+
+    def test_v4_train_example_pool_excludes_selected_train_pages(self) -> None:
+        dataset = load_dataset()
+        selected_records = select_records(dataset.train, max_records=5, random_seed=42)
+        selected_pages = {record_document_key(record.id) for record in selected_records}
+
+        example_records = _example_records_for_run(
+            dataset=dataset,
+            split="train",
+            selected_records=selected_records,
+            version=AnswerVersion.V4,
+        )
+
+        self.assertTrue(example_records)
+        self.assertTrue(all(record_document_key(record.id) not in selected_pages for record in example_records))
+
+    def test_v4_dev_example_pool_uses_train_records(self) -> None:
+        dataset = load_dataset()
+
+        example_records = _example_records_for_run(
+            dataset=dataset,
+            split="dev",
+            selected_records=dataset.dev[:5],
+            version=AnswerVersion.V4,
+        )
+
+        self.assertEqual([record.id for record in example_records], [record.id for record in dataset.train])
 
     def test_deduplicate_run_results_keeps_latest_duplicate_turn(self) -> None:
         dataset = load_dataset()

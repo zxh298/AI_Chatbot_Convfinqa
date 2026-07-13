@@ -21,6 +21,7 @@ from rich import print as rich_print
 from src import evaluation
 from src.answers import AnswerVersion, OpenAIAnswerer
 from src.data import find_record, load_dataset
+from src.example_retrieval import record_document_key
 from src.logger import get_logger
 from src.models import ConvFinQADataset, ConvFinQARecord
 from src.prompts import ChatTurn
@@ -148,20 +149,6 @@ def run(
         workers,
         output_path,
     )
-    answerer = OpenAIAnswerer(
-        api_key=_require_api_key(),
-        model=model,
-        version=version,
-        example_records=dataset.train,
-    )
-
-    def answer_question(
-        record: ConvFinQARecord,
-        history: list[ChatTurn],
-        question: str,
-    ) -> str:
-        return answerer.answer(record, history, question).text
-
     try:
         selected_records_path = selected_records_path or _selected_records_path_for(output_path)
         selected_records = _selected_records_for_run(
@@ -191,6 +178,25 @@ def run(
             rich_print(
                 f"[cyan]resume:[/cyan] {len(records_to_run)}/{len(selected_records)} selected records are incomplete and will be rerun",
             )
+
+        answerer = OpenAIAnswerer(
+            api_key=_require_api_key(),
+            model=model,
+            version=version,
+            example_records=_example_records_for_run(
+                dataset=dataset,
+                split=split,
+                selected_records=selected_records,
+                version=version,
+            ),
+        )
+
+        def answer_question(
+            record: ConvFinQARecord,
+            history: list[ChatTurn],
+            question: str,
+        ) -> str:
+            return answerer.answer(record, history, question).text
 
         # Workers > 1 runs records concurrently, but each record still replays
         # turns in order to preserve conversational dependencies. Turn rows are
@@ -302,6 +308,32 @@ def _selected_records_for_run(
     if missing_ids:
         raise typer.BadParameter(f"Selected records file contains IDs outside --split: {missing_ids[:3]}")
     return [records_by_id[record_id] for record_id in selected_ids]
+
+
+def _example_records_for_run(
+    *,
+    dataset: ConvFinQADataset,
+    split: str,
+    selected_records: Sequence[ConvFinQARecord],
+    version: AnswerVersion,
+) -> list[ConvFinQARecord]:
+    """Return v4 retrieval examples without leaking evaluation records.
+
+    For dev evaluation, train examples are allowed. For train-sample evaluation,
+    remove the whole selected sample from the retrieval pool, including matching
+    Single/Double variants that share the same underlying PDF page.
+    """
+    if version is not AnswerVersion.V4:
+        return []
+    if split != "train":
+        return dataset.train
+
+    selected_document_keys = {record_document_key(record.id) for record in selected_records}
+    return [
+        record
+        for record in dataset.train
+        if record_document_key(record.id) not in selected_document_keys
+    ]
 
 
 def _incomplete_records_for_resume(
