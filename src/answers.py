@@ -10,6 +10,7 @@ Versions are explicit:
 - v2 adds record-local evidence selection before answering.
 - v3 adds one no-gold verification retry on top of v2.
 - v4 adds lightweight train-example retrieval on top of v3.
+- v5 adds deterministic execution of a structured calculation plan on top of v3.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from openai import OpenAI, RateLimitError
 from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.calculation_plan import apply_calculation_plan
 from src.evidence import (
     EvidenceSnippet,
     build_evidence_snippets,
@@ -53,11 +55,13 @@ class AnswerVersion(str, Enum):
     V2 = "v2"
     V3 = "v3"
     V4 = "v4"
+    V5 = "v5"
 
 
-_EVIDENCE_SELECTION_VERSIONS = {AnswerVersion.V2, AnswerVersion.V3, AnswerVersion.V4}
-_VERIFICATION_VERSIONS = {AnswerVersion.V3, AnswerVersion.V4}
+_EVIDENCE_SELECTION_VERSIONS = {AnswerVersion.V2, AnswerVersion.V3, AnswerVersion.V4, AnswerVersion.V5}
+_VERIFICATION_VERSIONS = {AnswerVersion.V3, AnswerVersion.V4, AnswerVersion.V5}
 _EXAMPLE_RETRIEVAL_VERSIONS = {AnswerVersion.V4}
+_STRUCTURED_CALCULATION_VERSIONS = {AnswerVersion.V5}
 
 
 class AnswerResponse(BaseModel):
@@ -106,6 +110,7 @@ class OpenAIAnswerer:
             current_question=question,
             evidence_snippets=evidence_snippets,
             reasoning_examples=reasoning_examples,
+            use_structured_calculation=self._version in _STRUCTURED_CALCULATION_VERSIONS,
         )
         response_text = self._request_chat_completion(messages)
         response_text = self._retry_if_verification_fails(
@@ -114,6 +119,7 @@ class OpenAIAnswerer:
             response_text=response_text,
             evidence_snippets=evidence_snippets,
         )
+        response_text = self._apply_structured_calculation(response_text)
         return AnswerResponse(
             text=response_text,
             evidence_snippets=evidence_snippets,
@@ -184,6 +190,17 @@ class OpenAIAnswerer:
             {"role": "user", "content": build_retry_instruction(reason=verification.reason, question=question)},
         ]
         return self._request_chat_completion(retry_messages)
+
+    def _apply_structured_calculation(self, response_text: str) -> str:
+        """For v5, replace the final answer with locally executed plan output."""
+        if self._version not in _STRUCTURED_CALCULATION_VERSIONS:
+            return response_text
+
+        result = apply_calculation_plan(response_text)
+        if not result.executed:
+            logger.info("No executable v5 calculation plan found: %s", result.reason)
+            return response_text
+        return result.text
 
     def _request_chat_completion(self, messages: list[dict[str, str]]) -> str:
         """Call the chat API and normalize an empty response to an empty string."""
