@@ -125,6 +125,26 @@ class AnswerVerificationTests(unittest.TestCase):
         self.assertTrue(result.should_retry)
         self.assertIn("zero-valued candidate", result.reason or "")
 
+    def test_retries_zero_selection_when_non_zero_candidate_only_appears_in_evidence(self) -> None:
+        result = verify_answer(
+            question="what was the drawn amount from the credit facility that was set to expire in august 2021?",
+            answer=(
+                "Target: drawn amount from the credit facility\n"
+                "Values: cash borrowings = 0\n"
+                "Operation: select cash borrowings\n"
+                "Final answer: 0"
+            ),
+            evidence_snippets=[
+                _snippet(
+                    "as of december 31, 2016, there were no cash borrowings and "
+                    "$4.7 million of letters of credit outstanding under the credit facility",
+                ),
+            ],
+        )
+
+        self.assertTrue(result.should_retry)
+        self.assertIn("evidence sentence also contains a non-zero numeric alternative", result.reason or "")
+
     def test_accepts_zero_selection_when_question_asks_for_selected_zero_label(self) -> None:
         result = verify_answer(
             question="what was the amount of cash borrowings?",

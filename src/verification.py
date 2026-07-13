@@ -99,6 +99,7 @@ def verify_answer(
         question=question,
         answer=answer,
         final_answer=final_answer,
+        evidence_snippets=evidence_snippets,
     )
     if competing_zero_reason is not None:
         return _retry(competing_zero_reason)
@@ -184,7 +185,13 @@ def _has_percent_scale_mismatch(*, question: str, answer: str, final_answer: str
     return "%" in calculation or "* 100" in calculation or "*100" in calculation or "* 100" in operation or "*100" in operation
 
 
-def _find_competing_zero_selection_issue(*, question: str, answer: str, final_answer: str) -> str | None:
+def _find_competing_zero_selection_issue(
+    *,
+    question: str,
+    answer: str,
+    final_answer: str,
+    evidence_snippets: Sequence[EvidenceSnippet],
+) -> str | None:
     final_value = _parse_number(final_answer)
     if final_value is None or not math.isclose(final_value, 0.0, abs_tol=1e-9):
         return None
@@ -202,19 +209,48 @@ def _find_competing_zero_selection_issue(*, question: str, answer: str, final_an
     if selected_value is None or not math.isclose(selected_value.value, 0.0, abs_tol=1e-9):
         return None
 
-    non_zero_candidates = [value for value in values if not math.isclose(value.value, 0.0, abs_tol=1e-9)]
-    if not non_zero_candidates:
-        return None
-
     question_text = question.lower()
     selected_label_tokens = _label_tokens(selected_value.label)
     if selected_label_tokens and selected_label_tokens.issubset(_label_tokens(question_text)):
         return None
 
-    return (
-        "The answer selected a zero-valued candidate even though the `Values:` line lists non-zero alternatives. "
-        "Re-answer by choosing the value whose label best matches the question target, unless the question explicitly asks for the zero-valued label."
-    )
+    non_zero_candidates = [value for value in values if not math.isclose(value.value, 0.0, abs_tol=1e-9)]
+    if non_zero_candidates:
+        return (
+            "The answer selected a zero-valued candidate even though the `Values:` line lists non-zero alternatives. "
+            "Re-answer by choosing the value whose label best matches the question target, unless the question explicitly asks for the zero-valued label."
+        )
+
+    if _evidence_has_nonzero_alternative_for_selected_label(
+        selected_label=selected_value.label,
+        evidence_snippets=evidence_snippets,
+    ):
+        return (
+            "The answer selected a zero-valued candidate, but the selected evidence sentence also contains a non-zero numeric alternative. "
+            "Re-answer by listing the competing values and choosing the value whose label best matches the question target."
+        )
+
+    return None
+
+
+def _evidence_has_nonzero_alternative_for_selected_label(
+    *,
+    selected_label: str,
+    evidence_snippets: Sequence[EvidenceSnippet],
+) -> bool:
+    selected_tokens = _label_tokens(selected_label)
+    if not selected_tokens:
+        return False
+
+    for snippet in evidence_snippets:
+        snippet_tokens = _label_tokens(snippet.text)
+        if not selected_tokens & snippet_tokens:
+            continue
+        if re.search(r"\b(?:no|none|zero)\b", snippet.text, flags=re.IGNORECASE) is None:
+            continue
+        if any(_is_nonzero_candidate(number) for number in _NUMBER_PATTERN.findall(snippet.text)):
+            return True
+    return False
 
 
 def _find_denominator_issue(*, question: str, answer: str) -> str | None:
@@ -337,6 +373,17 @@ def _parse_number(text: str) -> float | None:
     if match is None:
         return None
     return float(match.group().replace(",", ""))
+
+
+def _is_nonzero_candidate(text: str) -> bool:
+    value = _parse_number(text)
+    if value is None or math.isclose(value, 0.0, abs_tol=1e-9):
+        return False
+    # Years often appear in the same evidence sentence and are not candidate
+    # financial values for a zero-selection check.
+    if value.is_integer() and 1900 <= value <= 2100:
+        return False
+    return True
 
 
 def _extract_arithmetic_expression(text: str) -> str | None:
