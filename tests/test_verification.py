@@ -80,6 +80,20 @@ class AnswerVerificationTests(unittest.TestCase):
         self.assertTrue(result.should_retry)
         self.assertIn("percent sign", result.reason or "")
 
+    def test_accepts_rounded_percent_final_answer(self) -> None:
+        result = verify_answer(
+            question="what percentage, then, did that amount represent?",
+            answer=(
+                "Values: letters of credit outstanding = 4.7, credit facility amount = 150\n"
+                "Operation: (4.7 / 150) * 100\n"
+                "Final answer: 3.1%\n"
+                "Calculation: (4.7 / 150) * 100 = 3.1333333"
+            ),
+            evidence_snippets=[_snippet("letters of credit outstanding = 4.7 and credit facility = 150")],
+        )
+
+        self.assertFalse(result.should_retry)
+
     def test_retries_total_divided_by_part_for_portion_question(self) -> None:
         result = verify_answer(
             question="what portion of total maximum potential amount is related to financial standby letters of credit?",

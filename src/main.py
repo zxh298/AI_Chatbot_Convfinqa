@@ -44,9 +44,10 @@ def chat(
     version: AnswerVersion = typer.Option(
         AnswerVersion.V1,
         "--version",
-        help="Answering version: v1=full-record baseline, v2=evidence selection, v3=evidence plus verification retry.",
+        help="Answering version: v1=full-record baseline, v2=evidence selection, v3=evidence plus verification retry, v4=v3 plus train-example retrieval.",
     ),
     show_evidence: bool = typer.Option(False, "--show-evidence", help="Print selected evidence snippets before each answer."),
+    show_examples: bool = typer.Option(False, "--show-examples", help="Print v4 retrieved train examples before each answer."),
 ) -> None:
     """Ask questions about a specific ConvFinQA record."""
     # Load the selected record before touching the API, so invalid IDs fail fast
@@ -62,7 +63,12 @@ def chat(
     rich_print(f"[green]Loaded {located_record.split} record:[/green] {record.id}")
     logger.info("Loaded %s record: %s", located_record.split, record.id)
 
-    answerer = OpenAIAnswerer(api_key=_require_api_key(), model="gpt-4o-mini", version=version)
+    answerer = OpenAIAnswerer(
+        api_key=_require_api_key(),
+        model="gpt-4o-mini",
+        version=version,
+        example_records=dataset.train,
+    )
     history: list[ChatTurn] = []
 
     while True:
@@ -77,12 +83,25 @@ def chat(
 
         try:
             answer = answerer.answer(record=record, history=history, question=message)
-            if show_evidence and version not in {AnswerVersion.V2, AnswerVersion.V3}:
-                rich_print("[yellow]--show-evidence requires --version v2 or v3 to select snippets.[/yellow]")
+            if show_evidence and version not in {AnswerVersion.V2, AnswerVersion.V3, AnswerVersion.V4}:
+                rich_print("[yellow]--show-evidence requires --version v2, v3, or v4 to select snippets.[/yellow]")
             if show_evidence and answer.evidence_snippets:
                 rich_print("[magenta][bold]selected evidence:[/bold][/magenta]")
                 for snippet in answer.evidence_snippets:
                     rich_print(f"[magenta]- [{snippet.snippet_id}] {snippet.text}[/magenta]")
+            if show_examples and version is not AnswerVersion.V4:
+                rich_print("[yellow]--show-examples requires --version v4.[/yellow]")
+            if show_examples and answer.reasoning_examples:
+                rich_print("[cyan][bold]similar train examples:[/bold][/cyan]")
+                for example in answer.reasoning_examples:
+                    rich_print(
+                        "[cyan]"
+                        f"- {example.record_id} turn {example.turn_index}: "
+                        f"Q: {example.question} | "
+                        f"program: {example.turn_program} | "
+                        f"answer: {example.conv_answer}"
+                        "[/cyan]",
+                    )
 
             rich_print(f"[blue][bold]assistant:[/bold] {answer.text}[/blue]")
 
@@ -110,7 +129,7 @@ def run(
     version: AnswerVersion = typer.Option(
         AnswerVersion.V1,
         "--version",
-        help="Answering version: v1=full-record baseline, v2=evidence selection, v3=evidence plus verification retry.",
+        help="Answering version: v1=full-record baseline, v2=evidence selection, v3=evidence plus verification retry, v4=v3 plus train-example retrieval.",
     ),
     workers: int = typer.Option(1, "--workers", min=1, help="Number of records to run concurrently."),
 ) -> None:
@@ -129,7 +148,12 @@ def run(
         workers,
         output_path,
     )
-    answerer = OpenAIAnswerer(api_key=_require_api_key(), model=model, version=version)
+    answerer = OpenAIAnswerer(
+        api_key=_require_api_key(),
+        model=model,
+        version=version,
+        example_records=dataset.train,
+    )
 
     def answer_question(
         record: ConvFinQARecord,

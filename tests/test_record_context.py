@@ -7,6 +7,7 @@ from __future__ import annotations
 import unittest
 
 from src.data import find_record, load_dataset
+from src.example_retrieval import ReasoningExample
 from src.formatting import format_record_context, format_table
 from src.prompts import ChatTurn, build_chat_messages, build_system_prompt
 
@@ -91,6 +92,25 @@ class RecordContextTests(unittest.TestCase):
         self.assertIn("without units, dates, or explanation", prompt)
         self.assertIn("calculation:", prompt)
         self.assertIn("use 3 instead of $3 million", prompt)
+
+    def test_prompt_can_include_reasoning_examples(self) -> None:
+        dataset = load_dataset()
+        example = ReasoningExample(
+            record_id="train-example",
+            turn_index=1,
+            previous_question="what was the amount?",
+            previous_answer="10",
+            question="what percentage, then, of this total did that amount represent?",
+            turn_program="divide(10, 100)",
+            executed_answer=0.1,
+            conv_answer="10%",
+        )
+
+        prompt = build_system_prompt(dataset.train[0], reasoning_examples=[example])
+
+        self.assertIn("Similar solved train examples:", prompt)
+        self.assertIn("Do not copy their numbers", prompt)
+        self.assertIn("divide(10, 100)", prompt)
 
 
 if __name__ == "__main__":

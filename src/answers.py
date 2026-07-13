@@ -9,6 +9,7 @@ Versions are explicit:
 - v1 uses the full selected record as context.
 - v2 adds record-local evidence selection before answering.
 - v3 adds one no-gold verification retry on top of v2.
+- v4 adds lightweight train-example retrieval on top of v3.
 """
 
 from __future__ import annotations
@@ -28,6 +29,12 @@ from src.evidence import (
     build_evidence_snippets,
     select_relevant_evidence,
 )
+from src.example_retrieval import (
+    ExampleIndexItem,
+    ReasoningExample,
+    build_example_index,
+    retrieve_reasoning_examples,
+)
 from src.logger import get_logger
 from src.models import ConvFinQARecord
 from src.prompts import ChatTurn, build_chat_messages
@@ -45,19 +52,22 @@ class AnswerVersion(str, Enum):
     V1 = "v1"
     V2 = "v2"
     V3 = "v3"
+    V4 = "v4"
 
 
-_EVIDENCE_SELECTION_VERSIONS = {AnswerVersion.V2, AnswerVersion.V3}
-_VERIFICATION_VERSIONS = {AnswerVersion.V3}
+_EVIDENCE_SELECTION_VERSIONS = {AnswerVersion.V2, AnswerVersion.V3, AnswerVersion.V4}
+_VERIFICATION_VERSIONS = {AnswerVersion.V3, AnswerVersion.V4}
+_EXAMPLE_RETRIEVAL_VERSIONS = {AnswerVersion.V4}
 
 
 class AnswerResponse(BaseModel):
-    """One model answer plus the evidence snippets used to produce it."""
+    """One model answer plus optional context used to produce it."""
 
     model_config = ConfigDict(extra="forbid")
 
     text: str
     evidence_snippets: list[EvidenceSnippet] = Field(default_factory=list)
+    reasoning_examples: list[ReasoningExample] = Field(default_factory=list)
 
 
 class OpenAIAnswerer:
@@ -68,12 +78,18 @@ class OpenAIAnswerer:
         api_key: str,
         model: str,
         version: AnswerVersion = AnswerVersion.V1,
+        example_records: Sequence[ConvFinQARecord] | None = None,
     ) -> None:
         self._client = OpenAI(api_key=api_key)
         self._model = model
         self._version = version
         self._snippet_cache: dict[str, list[EvidenceSnippet]] = {}
         self._snippet_cache_lock = threading.Lock()
+        self._example_index: list[ExampleIndexItem] = (
+            build_example_index(example_records or [])
+            if version in _EXAMPLE_RETRIEVAL_VERSIONS
+            else []
+        )
 
     def answer(
         self,
@@ -83,11 +99,13 @@ class OpenAIAnswerer:
     ) -> AnswerResponse:
         """Answer one question for a selected record."""
         evidence_snippets = self._select_evidence(record, history, question)
+        reasoning_examples = self._retrieve_examples(record, history, question)
         messages = build_chat_messages(
             record=record,
             history=list(history),
             current_question=question,
             evidence_snippets=evidence_snippets,
+            reasoning_examples=reasoning_examples,
         )
         response_text = self._request_chat_completion(messages)
         response_text = self._retry_if_verification_fails(
@@ -96,7 +114,11 @@ class OpenAIAnswerer:
             response_text=response_text,
             evidence_snippets=evidence_snippets,
         )
-        return AnswerResponse(text=response_text, evidence_snippets=evidence_snippets)
+        return AnswerResponse(
+            text=response_text,
+            evidence_snippets=evidence_snippets,
+            reasoning_examples=reasoning_examples or [],
+        )
 
     def _select_evidence(
         self,
@@ -117,6 +139,24 @@ class OpenAIAnswerer:
             history=history,
             current_question=question,
             rerank_fn=self._request_chat_completion,
+        )
+
+    def _retrieve_examples(
+        self,
+        record: ConvFinQARecord,
+        history: Sequence[ChatTurn],
+        question: str,
+    ) -> list[ReasoningExample] | None:
+        if self._version not in _EXAMPLE_RETRIEVAL_VERSIONS:
+            return None
+        if not self._example_index:
+            return []
+
+        return retrieve_reasoning_examples(
+            index=self._example_index,
+            history=history,
+            current_question=question,
+            current_record_id=record.id,
         )
 
     def _retry_if_verification_fails(

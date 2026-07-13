@@ -261,7 +261,9 @@ def _find_calculation_mismatch(*, answer: str, final_answer: str) -> str | None:
     if "%" in final_answer and not expression_is_percent:
         comparable_final = final_value / 100
 
-    if math.isclose(calculated_value, comparable_final, rel_tol=1e-3, abs_tol=1e-2):
+    abs_tol = 0.1 if expression_is_percent or "%" in final_answer else 1e-2
+    rel_tol = 2e-2 if expression_is_percent or "%" in final_answer else 1e-3
+    if math.isclose(calculated_value, comparable_final, rel_tol=rel_tol, abs_tol=abs_tol):
         return None
 
     return (
