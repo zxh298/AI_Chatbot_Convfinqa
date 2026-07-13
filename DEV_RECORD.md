@@ -1488,3 +1488,142 @@ We directly address grounding, conversational history, strict executed-answer ev
 We partially address numerical reasoning with answer-format checks and no-gold verification.
 We do not fully solve the paper's program-generation/symbolic-reasoning challenge.
 ```
+
+## V1 / V2 / V3 500-Record Result Comparison
+
+Run setting:
+
+```text
+split: train
+sample: 500 records
+random seed: 42
+model: gpt-4o-mini
+metric: strict execution accuracy against executed_answers
+```
+
+| Breakdown | v1 | v2 | v3 | v2-v1 | v3-v2 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| full results | 1223/1827 (66.9%) | 1231/1827 (67.4%) | 1275/1827 (69.8%) | +0.4 pts | +2.4 pts |
+| Number selection questions | 505/640 (78.9%) | 514/640 (80.3%) | 522/640 (81.6%) | +1.4 pts | +1.3 pts |
+| Program questions | 718/1187 (60.5%) | 717/1187 (60.4%) | 753/1187 (63.4%) | -0.1 pts | +3.0 pts |
+| Simple conversations | 782/1163 (67.2%) | 798/1163 (68.6%) | 819/1163 (70.4%) | +1.4 pts | +1.8 pts |
+| Hybrid conversations | 441/664 (66.4%) | 433/664 (65.2%) | 456/664 (68.7%) | -1.2 pts | +3.5 pts |
+| Hybrid conversations first part | 258/363 (71.1%) | 248/363 (68.3%) | 271/363 (74.7%) | -2.8 pts | +6.3 pts |
+| Hybrid conversations second part | 183/301 (60.8%) | 185/301 (61.5%) | 185/301 (61.5%) | +0.7 pts | +0.0 pts |
+| Turn 0 | 385/500 (77.0%) | 389/500 (77.8%) | 392/500 (78.4%) | +0.8 pts | +0.6 pts |
+| Turn 1 | 349/500 (69.8%) | 348/500 (69.6%) | 358/500 (71.6%) | -0.2 pts | +2.0 pts |
+| Turn 2 | 238/376 (63.3%) | 240/376 (63.8%) | 250/376 (66.5%) | +0.5 pts | +2.7 pts |
+| Turn 3 | 153/266 (57.5%) | 146/266 (54.9%) | 165/266 (62.0%) | -2.6 pts | +7.1 pts |
+| Turn 4 | 67/132 (50.8%) | 70/132 (53.0%) | 76/132 (57.6%) | +2.3 pts | +4.5 pts |
+
+Main reading:
+
+```text
+v2 gives a small overall gain over v1, mostly from evidence helping number selection.
+v3 is the clearer jump: +2.4 points over v2 overall.
+The v3 gain is strongest on program questions, hybrid first-part questions, and deeper turns.
+```
+
+### Solving V1's Original Errors
+
+This analysis uses v1's original wrong turns as the denominator.
+
+```text
+v1 total errors: 604
+v1 correct turns: 1223
+total turns: 1827
+```
+
+| Version | v1 errors solved | % of v1 errors solved | v1 errors still wrong | % still wrong |
+| --- | ---: | ---: | ---: | ---: |
+| v2 | 113/604 | 18.7% | 491/604 | 81.3% |
+| v3 | 135/604 | 22.4% | 469/604 | 77.6% |
+
+Regression check against v1's originally correct turns:
+
+| Version | v1 correct cases regressed | % of v1 correct regressed | v1 correct kept correct |
+| --- | ---: | ---: | ---: |
+| v2 | 105/1223 | 8.6% | 1118/1223 |
+| v3 | 83/1223 | 6.8% | 1140/1223 |
+
+Relationship between v2 and v3 fixes:
+
+```text
+Both v2 and v3 solved: 78
+Only v2 solved: 35
+Only v3 solved: 57
+Neither solved: 434
+```
+
+Main reading:
+
+```text
+v3 solves more of v1's original errors than v2.
+v3 also causes fewer regressions from v1's originally correct cases.
+This suggests v3 is a cleaner improvement path than v2 alone.
+```
+
+### Industry-Style Significance Interpretation
+
+| Version comparison | Overall gain | Interpretation |
+| --- | ---: | --- |
+| v2 vs v1 | +0.4 points | Small / marginal. Useful evidence that evidence selection can help, but not strong enough alone to justify the added latency/cost. |
+| v3 vs v2 | +2.4 points | Meaningful. This is a real gain, especially because it improves harder program questions. |
+| v3 vs v1 | +2.8 points | Solid prototype improvement. Worth reporting, but not a production-level breakthrough. |
+
+Important nuance:
+
+```text
+v2 adds an extra LLM call for evidence reranking, but improves only from 66.9% to 67.4%.
+In an industry setting, that would usually be questioned unless it improves a high-value slice or reduces severe errors.
+```
+
+v3 is better justified:
+
+```text
+v1: 1223/1827 = 66.9%
+v3: 1275/1827 = 69.8%
+gain: +52 correct turns
+```
+
+v3 also has fewer regressions than v2:
+
+```text
+v2 regressed 105 originally-correct v1 turns.
+v3 regressed 83 originally-correct v1 turns.
+```
+
+Overall interpretation:
+
+```text
+v2 is a useful stepping-stone, but not independently impressive.
+v3 is a meaningful improvement and worth presenting as the final implemented method.
+For a real industry decision, we would still want repeated runs, a confidence interval, dev-set validation, or a paired significance test.
+For this assignment, v3's +2.8 points over v1 is a credible improvement story.
+```
+
+## V1 / V2 / V3 Representative Error Examples
+
+These are the same representative examples used during failure analysis.
+
+| Example | Turn | Gold | v1 | v2 | v3 | Result |
+| --- | ---: | ---: | --- | --- | --- | --- |
+| `Single_ABMD/2006/page_62.pdf-1` calculation direction | 2 | `78` | `-78`, wrong | `-78`, wrong | `-64`, wrong | v3 still does not solve ambiguous direction / follow-up reference. |
+| `Single_ABMD/2006/page_62.pdf-1` propagated calculation | 3 | `78000` | `-78000`, wrong | `-78000`, wrong | `167000`, wrong | v3 changed the error, but still wrong. |
+| `Double_C/2008/page_217.pdf` wrong evidence / ratio | 0 | `0.30895` | `0.26`, wrong | `0.309`, correct | `0.309`, correct | v2 fixed this; v3 preserved it. |
+| `Double_C/2008/page_217.pdf` percent formatting | 3 | `0.05346` | `0.054`, correct | `0.053`, correct | `0.053`, correct | All correct under latest evaluator. |
+| `Double_ETR/2016/page_424.pdf` number selection | 0 | `4.7` | `0`, wrong | `0`, wrong | `4.7`, correct | v3 fixed the zero-selection issue. |
+| `Double_ETR/2016/page_424.pdf` credit facility value | 1 | `150` | parsed `0.5`, wrong | parsed `2021`, wrong | `150`, correct | v3 fixed dirty / non-clean final answer. |
+| `Double_ETR/2016/page_424.pdf` follow-up percentage | 2 | `0.03133` | `0.0313`, correct | `0`, wrong | `0.0313`, correct | v3 recovered because turn 0 was fixed. |
+| `Double_ETR/2016/page_424.pdf` max letters of credit | 3 | `75` | `75`, correct | `75`, correct | `75`, correct | All correct. |
+| `Double_ADBE/2011/page_83.pdf` annotation mismatch | 2 | `no` | `10`, wrong | `10`, wrong | `10`, wrong | Still wrong; this is dataset/task-format ambiguity. |
+| `Double_ADBE/2011/page_83.pdf` amortization rate | 3 | `16.66667` | refusal, wrong | refusal, wrong | refusal, wrong | v3 did not fix this case. |
+
+Main reading:
+
+```text
+v3 fixes the Double_ETR failures that motivated the no-gold verification retry.
+v3 keeps the Double_C evidence-selection win from v2.
+v3 does not solve every calculation/reference ambiguity, especially Single_ABMD.
+v3 also does not solve annotation-style mismatch cases like Double_ADBE.
+```
