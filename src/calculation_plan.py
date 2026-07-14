@@ -14,9 +14,10 @@ import re
 from enum import Enum
 from typing import TypeAlias, Union
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 PlanArgument: TypeAlias = Union[float, int, str]
+PlanId: TypeAlias = Union[int, str]
 
 _FINAL_ANSWER_PATTERN = re.compile(
     r"final\s+answer\s*:\s*(?P<answer>[^\n\r]+)",
@@ -43,9 +44,39 @@ class CalculationStep(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    id: int = Field(ge=0)
+    id: PlanId
     op: CalculationOp
     args: list[PlanArgument]
+
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, value: PlanId) -> PlanId:
+        """Keep step references readable and unambiguous."""
+        if isinstance(value, int) and value < 0:
+            raise ValueError("step id must be non-negative")
+        if isinstance(value, str) and not value.strip():
+            raise ValueError("step id must not be empty")
+        return value
+
+
+class CalculationValue(BaseModel):
+    """One named source value extracted from evidence."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    value: float
+    evidence: str | None = None
+
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, value: str) -> str:
+        """Keep value references readable and unambiguous."""
+        if not value.strip():
+            raise ValueError("value id must not be empty")
+        if value.startswith("#"):
+            raise ValueError("value id must not start with #")
+        return value
 
 
 class CalculationPlan(BaseModel):
@@ -53,6 +84,7 @@ class CalculationPlan(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    values: list[CalculationValue] = Field(default_factory=list)
     steps: list[CalculationStep]
     answer: PlanArgument
 
@@ -96,13 +128,21 @@ def apply_calculation_plan(answer_text: str) -> PlanExecutionResult:
 
 def execute_calculation_plan(plan: CalculationPlan) -> float:
     """Execute a validated calculation plan and return its numeric answer."""
-    values_by_id: dict[int, float] = {}
-    for step in plan.steps:
-        if step.id in values_by_id:
-            raise ValueError(f"Duplicate calculation step id: {step.id}")
-        values_by_id[step.id] = _execute_step(step, values_by_id)
+    values_by_reference: dict[str, float] = {}
+    for value in plan.values:
+        if value.id in values_by_reference:
+            raise ValueError(f"Duplicate calculation value id: {value.id}")
+        values_by_reference[value.id] = value.value
 
-    return _resolve_argument(plan.answer, values_by_id)
+    for step in plan.steps:
+        step_reference_keys = _reference_keys_for_step_id(step.id)
+        if any(key in values_by_reference for key in step_reference_keys):
+            raise ValueError(f"Duplicate calculation step id: {step.id}")
+        step_value = _execute_step(step, values_by_reference)
+        for key in step_reference_keys:
+            values_by_reference[key] = step_value
+
+    return _resolve_argument(plan.answer, values_by_reference)
 
 
 def _extract_calculation_plan(answer_text: str) -> CalculationPlan | None:
@@ -121,8 +161,14 @@ def _extract_calculation_plan(answer_text: str) -> CalculationPlan | None:
     return None
 
 
-def _execute_step(step: CalculationStep, values_by_id: dict[int, float]) -> float:
-    args = [_resolve_argument(arg, values_by_id) for arg in step.args]
+def _reference_keys_for_step_id(step_id: PlanId) -> list[str]:
+    if isinstance(step_id, int):
+        return [str(step_id), f"#{step_id}"]
+    return [step_id]
+
+
+def _execute_step(step: CalculationStep, values_by_reference: dict[str, float]) -> float:
+    args = [_resolve_argument(arg, values_by_reference) for arg in step.args]
     if step.op is CalculationOp.SELECT:
         _require_arg_count(step, args, 1)
         return args[0]
@@ -155,17 +201,13 @@ def _execute_step(step: CalculationStep, values_by_id: dict[int, float]) -> floa
     raise ValueError(f"Unsupported calculation op: {step.op}")
 
 
-def _resolve_argument(argument: PlanArgument, values_by_id: dict[int, float]) -> float:
+def _resolve_argument(argument: PlanArgument, values_by_reference: dict[str, float]) -> float:
     if isinstance(argument, (float, int)):
         return float(argument)
+    if argument in values_by_reference:
+        return values_by_reference[argument]
     if argument.startswith("#"):
-        try:
-            step_id = int(argument[1:])
-        except ValueError as error:
-            raise ValueError(f"Invalid step reference: {argument}") from error
-        if step_id not in values_by_id:
-            raise ValueError(f"Unknown step reference: {argument}")
-        return values_by_id[step_id]
+        raise ValueError(f"Unknown step reference: {argument}")
     try:
         return float(argument.replace(",", ""))
     except ValueError as error:

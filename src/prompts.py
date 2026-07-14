@@ -51,8 +51,9 @@ def build_system_prompt(
         sections.extend(
             [
                 "For this version, also output a machine-readable `Calculation plan JSON:` block before the final answer.",
-                'The JSON must have exactly this shape: {"steps":[{"id":0,"op":"subtract","args":[206588,181001]}],"answer":"#0"}.',
-                "Allowed ops are `select`, `add`, `subtract`, `multiply`, `divide`, `negate`, `abs`, `max`, and `min`; reference prior steps as `#0`, `#1`, etc.",
+                'The JSON should use this auditable shape: {"values":[{"id":"current_revenue","value":206588,"evidence":"E1"},{"id":"prior_revenue","value":181001,"evidence":"E2"}],"steps":[{"id":"change","op":"subtract","args":["current_revenue","prior_revenue"]}],"answer":"change"}.',
+                "Put labels and evidence references in the `values` list, not inside step arguments.",
+                "Allowed ops are `select`, `add`, `subtract`, `multiply`, `divide`, `negate`, `abs`, `max`, and `min`; step args should reference named values or earlier step ids.",
                 "For percentage, portion, ratio, or rate questions, prefer a ratio-scale plan such as `divide(part, total)` and let the final answer be the raw executable number, not a percentage display.",
                 "The code will execute this JSON locally, so make the plan contain only the values and operations needed for the current question.",
                 "For numerical answers, the final-answer value should be a pure executable number such as `3` or `-0.03264`, without units, words, dates, or `%`.",
