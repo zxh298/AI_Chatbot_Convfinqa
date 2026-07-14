@@ -7,6 +7,8 @@ The final implementation is a Typer CLI with interactive chat tool, data explora
 ## Data exploration
 The provided dataset file (data/convfinqa_dataset.json) contains 3037 "train" and 421 "dev" samples, which contains conversational numerical reasoning questions over unstructured financial documents, containing datatables. It is a cleaner version of the data described in the ConvFinQA paper [1]. The data has Type I (Simple) and Type II (Hybrid) conversations and a pre-extracted structured text table that contains table rows with cell values already linearised from the source filling, so the system can read table content directly from JSON. 
 
+Table 1 shows that the data contains more multi-turn conversations rather than single questions, with most records have between two and four turns. This supports the fact that the system needs to reference previous questions and answers, and the evaluation should consider turn level performance rather than only the overall accuracy.
+
 <div align="center">
 
 <table>
@@ -21,12 +23,99 @@ The provided dataset file (data/convfinqa_dataset.json) contains 3037 "train" an
   </tr>
 </table>
 
-<p><strong>Table 1. Dialogue length distribution by split.</strong></p>
+<p><strong>Table 1. Dialogue length distribution aross train and dev.</strong></p>
 
 </div>
 
+The tyoes of gold program in the data shows the numberical reasoning is built from a small set of arithmetic operations. Together, as what Table 2 shows, subtraction and division account for more than 70% of the total, which matches the nature of many financial questions: computing differences, ratios, margins, and percentage changes.
 
-reference the pain point in the paper
+<div align="center">
+
+<table>
+  <tr>
+    <th style="text-align:center;">Operation</th>
+    <th style="text-align:center;">Count</th>
+    <th style="text-align:center;">% of operation calls</th>
+  </tr>
+  <tr>
+    <td>subtract</td>
+    <td style="text-align:right;">5,131</td>
+    <td style="text-align:right;">40.07%</td>
+  </tr>
+  <tr>
+    <td>divide</td>
+    <td style="text-align:right;">4,280</td>
+    <td style="text-align:right;">33.42%</td>
+  </tr>
+  <tr>
+    <td>add</td>
+    <td style="text-align:right;">2,457</td>
+    <td style="text-align:right;">19.19%</td>
+  </tr>
+  <tr>
+    <td>multiply</td>
+    <td style="text-align:right;">894</td>
+    <td style="text-align:right;">6.98%</td>
+  </tr>
+  <tr>
+    <td>greater</td>
+    <td style="text-align:right;">40</td>
+    <td style="text-align:right;">0.31%</td>
+  </tr>
+  <tr>
+    <td>exp</td>
+    <td style="text-align:right;">4</td>
+    <td style="text-align:right;">0.03%</td>
+  </tr>
+</table>
+
+<p><strong>Table 2. Gold program operation distribution aross train and dev.</strong></p>
+
+</div>
+
+As shown in the ConvFinQA paper, Table 3 summerises the main challenges that make ConvFinQA more difficult than simple questions answering. The main task requires the solutions to generate answers using the correct evidence, resolve conversational references across multiple turns, and perform accurate reasoning over many competing values [1]. These challenges motivates the version evolution: each version targets a different source of error, from evidence selection, pattern retrieval verification, and deterministic calculation execution.
+
+<div align="center">
+
+<table>
+  <tr>
+  </tr>
+  <tr>
+    <td>1. Many competing numeric candidates within each record</td>
+  </tr>
+  <tr>
+    <td>2. Grounding the answer to the correct evidence or table row</td>
+  </tr>
+  <tr>
+    <td>3. Selecting the correct value from nearby or similar candidates</td>
+  </tr>
+  <tr>
+    <td>4. Resolving multi-turn references and follow-up questions</td>
+  </tr>
+  <tr>
+    <td>5. Preventing later-turn error propagation</td>
+  </tr>
+  <tr>
+    <td>6. Producing clean and parseable final answers</td>
+  </tr>
+  <tr>
+    <td>7. Handling ratio and percentage scale consistently</td>
+  </tr>
+  <tr>
+    <td>8. Choosing the correct operation, sign, and denominator</td>
+  </tr>
+  <tr>
+    <td>9. Avoiding arithmetic mistakes in numerical reasoning</td>
+  </tr>
+  <tr>
+    <td>10. Inferring the intended reasoning pattern for program-style questions</td>
+  </tr>
+</table>
+
+<p><strong>Table 3. Key modeling challenges in ConvFinQA paper.</strong></p>
+
+</div>
+
 
 ## Method
 The ConvFinQA paper follows the same metric as in FinQA, the execution accuracy to evaluate the final execution result and program accuracy to evaluate program equivalence [1]. 
