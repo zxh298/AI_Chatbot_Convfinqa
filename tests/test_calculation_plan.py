@@ -30,6 +30,15 @@ class CalculationPlanTests(unittest.TestCase):
 
         self.assertAlmostEqual(execute_calculation_plan(plan), 0.0313333333, places=8)
 
+    def test_executes_direct_selection_plan_with_named_value(self) -> None:
+        plan = CalculationPlan(
+            values=[CalculationValue(id="credit_facility_amount", value=150, evidence="T-31")],
+            steps=[CalculationStep(id="answer", op="select", args=["credit_facility_amount"])],
+            answer="answer",
+        )
+
+        self.assertEqual(execute_calculation_plan(plan), 150)
+
     def test_executes_plan_with_step_references(self) -> None:
         plan = CalculationPlan(
             steps=[

@@ -51,8 +51,10 @@ def build_system_prompt(
         sections.extend(
             [
                 "For this version, also output a machine-readable `Calculation plan JSON:` block before the final answer.",
-                'The JSON should use this auditable shape: {"values":[{"id":"current_revenue","value":206588,"evidence":"E1"},{"id":"prior_revenue","value":181001,"evidence":"E2"}],"steps":[{"id":"change","op":"subtract","args":["current_revenue","prior_revenue"]}],"answer":"change"}.',
+                'The JSON should use this auditable shape: {"values":[{"id":"current_revenue","value":206588,"evidence":"T-1"},{"id":"prior_revenue","value":181001,"evidence":"T-2"}],"steps":[{"id":"change","op":"subtract","args":["current_revenue","prior_revenue"]}],"answer":"change"}.',
+                "Use actual selected evidence snippet ids such as `T-31` or `R-4` in the `evidence` fields; do not invent generic ids such as `E1`.",
                 "Put labels and evidence references in the `values` list, not inside step arguments.",
+                'For direct number-selection questions, still output a one-step select plan such as {"values":[{"id":"credit_facility_amount","value":150,"evidence":"T-31"}],"steps":[{"id":"answer","op":"select","args":["credit_facility_amount"]}],"answer":"answer"}.',
                 "Allowed ops are `select`, `add`, `subtract`, `multiply`, `divide`, `negate`, `abs`, `max`, and `min`; step args should reference named values or earlier step ids.",
                 "For percentage, portion, ratio, or rate questions, prefer a ratio-scale plan such as `divide(part, total)` and let the final answer be the raw executable number, not a percentage display.",
                 "The code will execute this JSON locally, so make the plan contain only the values and operations needed for the current question.",

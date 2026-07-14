@@ -112,6 +112,17 @@ class RecordContextTests(unittest.TestCase):
         self.assertIn("Do not copy their numbers", prompt)
         self.assertIn("divide(10, 100)", prompt)
 
+    def test_structured_calculation_prompt_guides_direct_selection_plans(self) -> None:
+        dataset = load_dataset()
+
+        prompt = build_system_prompt(dataset.train[0], use_structured_calculation=True).lower()
+
+        self.assertIn("actual selected evidence snippet ids", prompt)
+        self.assertIn("do not invent generic ids", prompt)
+        self.assertIn("direct number-selection questions", prompt)
+        self.assertIn('"op":"select"', prompt)
+        self.assertIn('"evidence":"t-31"', prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

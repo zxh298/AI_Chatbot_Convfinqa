@@ -186,6 +186,9 @@ class AnswerVerificationTests(unittest.TestCase):
         self.assertIn("Do not answer a previous turn", instruction)
         self.assertIn("must contain only one comparable value", instruction)
         self.assertIn("Final answer", instruction)
+        self.assertIn("do not change the answer into a refusal", instruction)
+        self.assertIn("Calculation plan JSON", instruction)
+        self.assertIn("one-step `select` calculation plan", instruction)
 
 
 def _snippet(text: str) -> EvidenceSnippet:
