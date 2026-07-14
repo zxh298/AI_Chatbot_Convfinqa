@@ -11,6 +11,7 @@ Versions are explicit:
 - v3 adds one no-gold verification retry on top of v2.
 - v4 adds lightweight train-example retrieval on top of v3.
 - v5 adds deterministic execution of a structured calculation plan on top of v3.
+- v5a adds a limited offline numeric fallback on top of v5.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from collections.abc import Sequence
 from enum import Enum
 from typing import cast
 
-from openai import OpenAI, RateLimitError
+from openai import APIError, OpenAI, RateLimitError
 from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -29,6 +30,7 @@ from src.calculation_plan import apply_calculation_plan
 from src.evidence import (
     EvidenceSnippet,
     build_evidence_snippets,
+    select_candidate_snippets,
     select_relevant_evidence,
 )
 from src.example_retrieval import (
@@ -39,6 +41,7 @@ from src.example_retrieval import (
 )
 from src.logger import get_logger
 from src.models import ConvFinQARecord
+from src.offline_fallback import answer_with_offline_fallback
 from src.prompts import ChatTurn, build_chat_messages
 from src.verification import build_retry_instruction, verify_answer
 
@@ -56,12 +59,14 @@ class AnswerVersion(str, Enum):
     V3 = "v3"
     V4 = "v4"
     V5 = "v5"
+    V5A = "v5a"
 
 
-_EVIDENCE_SELECTION_VERSIONS = {AnswerVersion.V2, AnswerVersion.V3, AnswerVersion.V4, AnswerVersion.V5}
-_VERIFICATION_VERSIONS = {AnswerVersion.V3, AnswerVersion.V4, AnswerVersion.V5}
+_EVIDENCE_SELECTION_VERSIONS = {AnswerVersion.V2, AnswerVersion.V3, AnswerVersion.V4, AnswerVersion.V5, AnswerVersion.V5A}
+_VERIFICATION_VERSIONS = {AnswerVersion.V3, AnswerVersion.V4, AnswerVersion.V5, AnswerVersion.V5A}
 _EXAMPLE_RETRIEVAL_VERSIONS = {AnswerVersion.V4}
-_STRUCTURED_CALCULATION_VERSIONS = {AnswerVersion.V5}
+_STRUCTURED_CALCULATION_VERSIONS = {AnswerVersion.V5, AnswerVersion.V5A}
+_OFFLINE_FALLBACK_VERSIONS = {AnswerVersion.V5A}
 
 
 class AnswerResponse(BaseModel):
@@ -112,14 +117,31 @@ class OpenAIAnswerer:
             reasoning_examples=reasoning_examples,
             use_structured_calculation=self._version in _STRUCTURED_CALCULATION_VERSIONS,
         )
-        response_text = self._request_chat_completion(messages)
-        response_text = self._retry_if_verification_fails(
-            messages=messages,
+        try:
+            response_text = self._request_chat_completion(messages)
+            response_text = self._retry_if_verification_fails(
+                messages=messages,
+                question=question,
+                response_text=response_text,
+                evidence_snippets=evidence_snippets,
+            )
+        except APIError as error:
+            if self._version not in _OFFLINE_FALLBACK_VERSIONS:
+                raise
+            logger.warning("Using v5a offline fallback after OpenAI API error: %s", error)
+            response_text = self._offline_fallback_answer(
+                question=question,
+                history=history,
+                evidence_snippets=evidence_snippets,
+                reason=str(error),
+            )
+
+        response_text = self._apply_structured_calculation(
             question=question,
-            response_text=response_text,
+            history=history,
             evidence_snippets=evidence_snippets,
+            response_text=response_text,
         )
-        response_text = self._apply_structured_calculation(response_text)
         return AnswerResponse(
             text=response_text,
             evidence_snippets=evidence_snippets,
@@ -140,12 +162,23 @@ class OpenAIAnswerer:
         with self._snippet_cache_lock:
             record_snippets = self._snippet_cache.setdefault(record.id, build_evidence_snippets(record))
 
-        return select_relevant_evidence(
-            snippets=record_snippets,
-            history=history,
-            current_question=question,
-            rerank_fn=self._request_chat_completion,
-        )
+        try:
+            return select_relevant_evidence(
+                snippets=record_snippets,
+                history=history,
+                current_question=question,
+                rerank_fn=self._request_chat_completion,
+            )
+        except APIError as error:
+            if self._version not in _OFFLINE_FALLBACK_VERSIONS:
+                raise
+            logger.warning("Using lexical evidence fallback after OpenAI API error: %s", error)
+            return select_candidate_snippets(
+                snippets=record_snippets,
+                history=history,
+                current_question=question,
+                limit=8,
+            )
 
     def _retrieve_examples(
         self,
@@ -191,7 +224,14 @@ class OpenAIAnswerer:
         ]
         return self._request_chat_completion(retry_messages)
 
-    def _apply_structured_calculation(self, response_text: str) -> str:
+    def _apply_structured_calculation(
+        self,
+        *,
+        question: str,
+        history: Sequence[ChatTurn],
+        evidence_snippets: Sequence[EvidenceSnippet],
+        response_text: str,
+    ) -> str:
         """For v5, replace the final answer with locally executed plan output."""
         if self._version not in _STRUCTURED_CALCULATION_VERSIONS:
             return response_text
@@ -199,8 +239,38 @@ class OpenAIAnswerer:
         result = apply_calculation_plan(response_text)
         if not result.executed:
             logger.info("No executable v5 calculation plan found: %s", result.reason)
+            if self._version not in _OFFLINE_FALLBACK_VERSIONS:
+                return response_text
+            fallback_text = self._offline_fallback_answer(
+                question=question,
+                history=history,
+                evidence_snippets=evidence_snippets,
+                reason=result.reason,
+            )
+            if fallback_text:
+                return fallback_text
             return response_text
         return result.text
+
+    def _offline_fallback_answer(
+        self,
+        *,
+        question: str,
+        history: Sequence[ChatTurn],
+        evidence_snippets: Sequence[EvidenceSnippet],
+        reason: str | None,
+    ) -> str:
+        """Return a limited offline v5a fallback answer when it is confident."""
+        fallback = answer_with_offline_fallback(
+            question=question,
+            history=history,
+            evidence_snippets=evidence_snippets,
+        )
+        if not fallback.answered:
+            logger.info("No v5a offline fallback answer: %s; original reason: %s", fallback.reason, reason)
+            return ""
+        logger.info("Using v5a offline fallback answer with confidence %.2f", fallback.confidence)
+        return fallback.text
 
     def _request_chat_completion(self, messages: list[dict[str, str]]) -> str:
         """Call the chat API and normalize an empty response to an empty string."""

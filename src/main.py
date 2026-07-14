@@ -45,7 +45,7 @@ def chat(
     version: AnswerVersion = typer.Option(
         AnswerVersion.V1,
         "--version",
-        help="Answering version: v1=full-record baseline, v2=evidence selection, v3=evidence plus verification retry, v4=v3 plus train-example retrieval, v5=v3 plus structured calculation execution.",
+        help="Answering version: v1=full-record baseline, v2=evidence selection, v3=evidence plus verification retry, v4=v3 plus train-example retrieval, v5=v3 plus structured calculation execution, v5a=v5 plus limited offline fallback.",
     ),
     show_evidence: bool = typer.Option(False, "--show-evidence", help="Print selected evidence snippets before each answer."),
     show_examples: bool = typer.Option(False, "--show-examples", help="Print v4 retrieved train examples before each answer."),
@@ -84,8 +84,8 @@ def chat(
 
         try:
             answer = answerer.answer(record=record, history=history, question=message)
-            if show_evidence and version not in {AnswerVersion.V2, AnswerVersion.V3, AnswerVersion.V4, AnswerVersion.V5}:
-                rich_print("[yellow]--show-evidence requires --version v2, v3, v4, or v5 to select snippets.[/yellow]")
+            if show_evidence and version not in {AnswerVersion.V2, AnswerVersion.V3, AnswerVersion.V4, AnswerVersion.V5, AnswerVersion.V5A}:
+                rich_print("[yellow]--show-evidence requires --version v2, v3, v4, v5, or v5a to select snippets.[/yellow]")
             if show_evidence and answer.evidence_snippets:
                 rich_print("[magenta][bold]selected evidence:[/bold][/magenta]")
                 for snippet in answer.evidence_snippets:
@@ -130,7 +130,7 @@ def run(
     version: AnswerVersion = typer.Option(
         AnswerVersion.V1,
         "--version",
-        help="Answering version: v1=full-record baseline, v2=evidence selection, v3=evidence plus verification retry, v4=v3 plus train-example retrieval, v5=v3 plus structured calculation execution.",
+        help="Answering version: v1=full-record baseline, v2=evidence selection, v3=evidence plus verification retry, v4=v3 plus train-example retrieval, v5=v3 plus structured calculation execution, v5a=v5 plus limited offline fallback.",
     ),
     workers: int = typer.Option(1, "--workers", min=1, help="Number of records to run concurrently."),
 ) -> None:

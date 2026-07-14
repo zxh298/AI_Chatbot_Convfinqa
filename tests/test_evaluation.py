@@ -286,6 +286,18 @@ class BaselineEvaluationTests(unittest.TestCase):
 
         self.assertEqual(example_records, [])
 
+    def test_v5a_does_not_use_v4_example_retrieval_pool(self) -> None:
+        dataset = load_dataset()
+
+        example_records = _example_records_for_run(
+            dataset=dataset,
+            split="dev",
+            selected_records=dataset.dev[:5],
+            version=AnswerVersion.V5A,
+        )
+
+        self.assertEqual(example_records, [])
+
     def test_deduplicate_run_results_keeps_latest_duplicate_turn(self) -> None:
         dataset = load_dataset()
         record = dataset.train[0]
