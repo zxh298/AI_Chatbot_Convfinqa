@@ -27,7 +27,7 @@ Table 1 shows that the data contains more multi-turn conversations rather than s
 
 </div>
 
-The tyoes of gold program in the data shows the numberical reasoning is built from a small set of arithmetic operations. Together, as what Table 2 shows, subtraction and division account for more than 70% of the total, which matches the nature of many financial questions: computing differences, ratios, margins, and percentage changes.
+The types of gold program in the data shows the numberical reasoning is built from a small set of arithmetic operations. Together, as what Table 2 shows, subtraction and division account for more than 70% of the total, which matches the nature of many financial questions: computing differences, ratios, margins, and percentage changes.
 
 <div align="center">
 
@@ -116,23 +116,33 @@ As shown in the ConvFinQA paper, Table 3 summerises the main challenges that mak
 
 </div>
 
+Our solution reads the provided ConvFinQA dataset from the given JSON file, where each record already contains pre-extracted document text, a structured table, dialogue questions, gold answers, and metadata. The structured table object is converted into a readable row-oriented table or evidence snippets with IDs (see more details in Section Methodology), which are used by different versions of our solution. Model outputs and evaluation results are save as JSONL file: batch runs write one prediction per turn, and the evaluation step later reads those saved predictions, compares them against `executed_answers`, and writes scored results back to JSONL. This separation makes the pipeline reproducible because the result generation and scoring can be rerun independently. 
 
-## Method
-The ConvFinQA paper follows the same metric as in FinQA, the execution accuracy to evaluate the final execution result and program accuracy to evaluate program equivalence [1]. 
+## Methodology
+Learned from the data and the scope of the task, full corpus-level RAG (Retrieval-Augmented Generation) is not used in our solution. The assignment data already provides the relevant "record_id" for each conversation and the central challenge is not retrieving the correct financial, but giving correct answer within the selected record. Using a full RAG pipeline with document indexing, chunk retrieval, vector search and re-ranking would add engineering complexity without providing direct benefit on solve the main challenges (shown as in Table 3) presented in this assignment.   
 
-Data engineering: table parser
+The evaluation focuses on `executed_answers` rather than `turn_program` because the goal of this prototype is to anwer the financial question correctly, rather than to reproduce the exact ConvFinQA program annotation. In addtion, `turn_program` only represents one possible reasoning program, different valid reasoning paths can also produce the same final answer, especially using an LLM-based system. So we use `executed_answers` for strict scoring, and the solution generates information similar to `turn_program` which is used to make the reasoning inspectable and to execute the final arithmetic deterministically. 
+
 why not RAG
-
+Data engineering: table parser
 
 ### Engineering
 gpt-4o-mini for cost and speed efficiency, workers for parallelisation. 
 My system therefore focuses on selecting the relevant table rows and grounding extracted values to evidence IDs, rather than reconstructing table layout from the original document.
+How our solution is connected to the chat tool.
+workers.
 ## Error Analysis
 ## Future Work 
-## Abstract
+## Appendix
 AI usage in this report: codex
-## Mentioned readme
+Mentioned readme
 Use reference in the paper to show the pain point
+
+Rewrite this:
+
+also avoided over-engineering because this is a 7-day prototype assignment, and the goal is to demonstrate disciplined modeling decisions rather than build the largest possible architecture. Since the dataset already provides the selected record, heavier designs such as corpus-level RAG, vector databases, multi-agent orchestration, or a full reimplementation of the paper’s DSL would add latency, complexity, and additional failure points without necessarily improving the core metric. Instead, I used a staged versioned design where each version targets an observed failure mode: v1 establishes the baseline, v2 improves grounding, v3 adds no-gold verification, v4 tests reasoning-pattern retrieval, and v5 adds deterministic execution for common arithmetic. This keeps the system easier to inspect, test, and compare while still making meaningful progress on the main ConvFinQA challenges.
 
 ## Reference
 [1] Chen, Zhiyu, Shiyang Li, Charese Smiley, Zhiqiang Ma, Sameena Shah, and William Yang Wang. "Convfinqa: Exploring the chain of numerical reasoning in conversational finance question answering." In Proceedings of the 2022 conference on empirical methods in natural language processing, pp. 6279-6292. 2022.
+
+[2] OpenAI. (2024, July 18). GPT-4o mini: Advancing cost-efficient intelligence. https://openai.com/index/gpt-4o-mini-advancing-cost-efficient-intelligence/
