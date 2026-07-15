@@ -459,7 +459,7 @@ For this version, also output a machine-readable Calculation plan JSON block bef
 
 ## 2. Version Comparison With Example
 
-### v1 vs v2: Better Evidence Selection
+### v1 -> v2: Better Evidence Selection
 ```text
 Record ID: Single_PNC/2018/page_81.pdf-3
 Turn index: 0
@@ -477,7 +477,7 @@ totaling $22.1 billion and securities available for sale totaling $63.4 billion.
 The result shows `v1` combined two nearby numbers and answered 85.5 (22.1+63.4), while `v2` correctly shows 22.1 as the final answer.
 
 
-### v2 vs v3: Verification Catches Suspicious Selection
+### v2 -> v3: Verification Catches Suspicious Selection
 
 ```text
 Record ID: Double_ETR/2016/page_424.pdf
