@@ -276,7 +276,7 @@ As Table 6 shows, the general accuracy in each breakdown metric (same as the met
   </tbody>
 </table>
 
-<p><strong>Table 6. Train sample accuracy breakdown across solution versions.</strong></p>
+<p><strong>Table 6. Accuracy results breakdown using train sample.</strong></p>
 </div>
 
 <br>
@@ -347,7 +347,7 @@ The dev results (shown as in Table 8) follows the same general trend as the trai
     <tr><td>Turn 7</td><td>0/1 (0.0%)</td><td>0/1 (0.0%)</td><td>0/1 (0.0%)</td><td>0/1 (0.0%)</td><td>0/1 (0.0%)</td></tr>
   </tbody>
 </table>
-<p><strong>Table 8. Dev data accuracy breakdown across solution versions.</strong></p>
+<p><strong>Table 8. Accuracy results breakdown using dev data.</strong></p>
 </div>
 
 <br>
