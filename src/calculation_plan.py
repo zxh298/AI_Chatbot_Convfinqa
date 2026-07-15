@@ -101,7 +101,12 @@ class PlanExecutionResult(BaseModel):
 
 
 def apply_calculation_plan(answer_text: str) -> PlanExecutionResult:
-    """Execute the first valid JSON calculation plan found in an answer."""
+    """Execute the first valid JSON calculation plan found in an answer.
+
+    This is v5's key step: the LLM still proposes values and operations, but
+    code owns the final arithmetic and rewrites the `Final answer:` line with
+    the executed result.
+    """
     plan = _extract_calculation_plan(answer_text)
     if plan is None:
         return PlanExecutionResult(
@@ -128,6 +133,8 @@ def apply_calculation_plan(answer_text: str) -> PlanExecutionResult:
 
 def execute_calculation_plan(plan: CalculationPlan) -> float:
     """Execute a validated calculation plan and return its numeric answer."""
+    # Values and step outputs share one reference namespace. This catches plans
+    # where a model accidentally reuses an id for two different meanings.
     values_by_reference: dict[str, float] = {}
     for value in plan.values:
         if value.id in values_by_reference:
@@ -146,6 +153,7 @@ def execute_calculation_plan(plan: CalculationPlan) -> float:
 
 
 def _extract_calculation_plan(answer_text: str) -> CalculationPlan | None:
+    """Scan free-form model text for the first JSON object matching the schema."""
     decoder = json.JSONDecoder()
     for start_index, character in enumerate(answer_text):
         if character != "{":
@@ -168,6 +176,7 @@ def _reference_keys_for_step_id(step_id: PlanId) -> list[str]:
 
 
 def _execute_step(step: CalculationStep, values_by_reference: dict[str, float]) -> float:
+    """Execute one closed-set arithmetic operation."""
     args = [_resolve_argument(arg, values_by_reference) for arg in step.args]
     if step.op is CalculationOp.SELECT:
         _require_arg_count(step, args, 1)
@@ -202,6 +211,7 @@ def _execute_step(step: CalculationStep, values_by_reference: dict[str, float]) 
 
 
 def _resolve_argument(argument: PlanArgument, values_by_reference: dict[str, float]) -> float:
+    """Resolve literals, named values, and step references to numbers."""
     if isinstance(argument, (float, int)):
         return float(argument)
     if argument in values_by_reference:
@@ -220,6 +230,7 @@ def _require_arg_count(step: CalculationStep, args: list[float], expected_count:
 
 
 def _replace_final_answer(answer_text: str, value: str) -> str:
+    """Replace or append the answer line while preserving the model's audit trail."""
     replacement = f"Final answer: {value}"
     if _FINAL_ANSWER_PATTERN.search(answer_text):
         return _FINAL_ANSWER_PATTERN.sub(replacement, answer_text, count=1)

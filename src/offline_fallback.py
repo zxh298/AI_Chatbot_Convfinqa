@@ -104,7 +104,11 @@ def answer_with_offline_fallback(
     evidence_snippets: Sequence[EvidenceSnippet],
     confidence_threshold: float = 0.45,
 ) -> OfflineFallbackResult:
-    """Try to answer simple numeric questions without an LLM call."""
+    """Try to answer simple numeric questions without an LLM call.
+
+    The fallback intentionally abstains unless one candidate is clearly ahead.
+    It is a robustness feature for v5a, not a replacement for the LLM pipeline.
+    """
     extracted_values = _extract_values(evidence_snippets)
     if not extracted_values:
         return OfflineFallbackResult(
@@ -147,6 +151,7 @@ def answer_with_offline_fallback(
 
 
 def _extract_values(evidence_snippets: Sequence[EvidenceSnippet]) -> list[_ExtractedValue]:
+    """Extract numeric candidates plus lightweight labels from selected evidence."""
     values: list[_ExtractedValue] = []
     for evidence_rank, snippet in enumerate(evidence_snippets):
         for number_index, match in enumerate(_NUMBER_PATTERN.finditer(snippet.text), start=1):
@@ -176,6 +181,7 @@ def _generate_candidates(
     history: Sequence[ChatTurn],
     extracted_values: Sequence[_ExtractedValue],
 ) -> list[_Candidate]:
+    """Generate simple plans that mirror common ConvFinQA operations."""
     candidates = [_select_candidate(question, value) for value in extracted_values]
     if _PERCENT_PATTERN.search(question):
         candidates.extend(_ratio_candidates(question, extracted_values))
@@ -310,6 +316,7 @@ def _history_ratio_candidates(
 
 
 def _execute_candidates(candidates: Sequence[_Candidate]) -> list[tuple[_Candidate, float]]:
+    """Run candidate plans through the same executor used by v5."""
     executed: list[tuple[_Candidate, float]] = []
     seen: set[tuple[str, float]] = set()
     for candidate in candidates:
@@ -326,6 +333,7 @@ def _execute_candidates(candidates: Sequence[_Candidate]) -> list[tuple[_Candida
 
 
 def _with_confidences(executed_candidates: Sequence[tuple[_Candidate, float]]) -> list[tuple[_Candidate, float, float]]:
+    """Convert heuristic scores into relative confidence among top candidates."""
     ranked_candidates = sorted(executed_candidates, key=lambda item: -item[0].score)[:5]
     max_score = max(candidate.score for candidate, _value in ranked_candidates)
     weights = [math.exp(candidate.score - max_score) for candidate, _value in ranked_candidates]

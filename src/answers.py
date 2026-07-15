@@ -80,7 +80,12 @@ class AnswerResponse(BaseModel):
 
 
 class OpenAIAnswerer:
-    """Generate answers while hiding OpenAI and evidence-selection details."""
+    """Generate one ConvFinQA answer with the selected version's pipeline.
+
+    The class is intentionally the only owner of OpenAI calls. Version-specific
+    behavior is expressed as small routing sets above, so evaluation and CLI code
+    can treat every version through the same `answer(...)` interface.
+    """
 
     def __init__(
         self,
@@ -106,7 +111,10 @@ class OpenAIAnswerer:
         history: Sequence[ChatTurn],
         question: str,
     ) -> AnswerResponse:
-        """Answer one question for a selected record."""
+        """Answer one turn, applying the enabled version stages in order."""
+        # All versions share the same public flow. Routing sets decide which
+        # optional stages are active: evidence, examples, verification, v5 plan
+        # execution, and v5a fallback.
         evidence_snippets = self._select_evidence(record, history, question)
         reasoning_examples = self._retrieve_examples(record, history, question)
         messages = build_chat_messages(
@@ -154,6 +162,7 @@ class OpenAIAnswerer:
         history: Sequence[ChatTurn],
         question: str,
     ) -> list[EvidenceSnippet]:
+        """Return focused record-local evidence for versions that use it."""
         if self._version not in _EVIDENCE_SELECTION_VERSIONS:
             return []
 
@@ -172,6 +181,8 @@ class OpenAIAnswerer:
         except APIError as error:
             if self._version not in _OFFLINE_FALLBACK_VERSIONS:
                 raise
+            # v5a is the only version allowed to keep going without an LLM
+            # reranker; it falls back to the lexical prefilter candidates.
             logger.warning("Using lexical evidence fallback after OpenAI API error: %s", error)
             return select_candidate_snippets(
                 snippets=record_snippets,
@@ -186,6 +197,7 @@ class OpenAIAnswerer:
         history: Sequence[ChatTurn],
         question: str,
     ) -> list[ReasoningExample] | None:
+        """Return v4 reasoning examples, or `None` when examples are disabled."""
         if self._version not in _EXAMPLE_RETRIEVAL_VERSIONS:
             return None
         if not self._example_index:
@@ -205,6 +217,7 @@ class OpenAIAnswerer:
         response_text: str,
         evidence_snippets: Sequence[EvidenceSnippet],
     ) -> str:
+        """Run the no-gold verifier and retry once when it finds a local issue."""
         if self._version not in _VERIFICATION_VERSIONS:
             return response_text
 
@@ -273,7 +286,7 @@ class OpenAIAnswerer:
         return fallback.text
 
     def _request_chat_completion(self, messages: list[dict[str, str]]) -> str:
-        """Call the chat API and normalize an empty response to an empty string."""
+        """Call the chat API with bounded exponential backoff for rate limits."""
         retry_delay = _INITIAL_RETRY_DELAY_SECONDS
         for attempt in range(_MAX_RATE_LIMIT_RETRIES + 1):
             try:

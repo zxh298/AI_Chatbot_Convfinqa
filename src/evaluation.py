@@ -169,7 +169,12 @@ def run_record(
     max_turns_per_record: int | None = None,
     on_turn_result: TurnResultCallback | None = None,
 ) -> list[TurnRunResult]:
-    """Replay one record's turns sequentially and return raw model answers."""
+    """Replay one record's turns sequentially and return raw model answers.
+
+    Gold questions are used only to drive the conversation order. Gold answers
+    are not visible to the answer function; scoring happens later in
+    `evaluate_run_results`.
+    """
     # History is reset per record, matching the interactive chat behavior.
     history: list[ChatTurn] = []
     results: list[TurnRunResult] = []
@@ -195,12 +200,20 @@ def run_record(
 
 
 def answer_for_history(answer: str) -> str:
-    """Return compact prior-turn text for follow-up prompts."""
+    """Return compact prior-turn text for follow-up prompts.
+
+    Keeping only the final answer prevents verbose reasoning blocks from
+    polluting later turns, while still preserving the conversational dependency.
+    """
     return f"Final answer: {_extract_final_answer(answer)}"
 
 
 def parse_answer_text(answer: str, question: str | None = None) -> NormalizedAnswer:
-    """Parse an answer string into a comparable value when possible."""
+    """Parse an answer string into a comparable value when possible.
+
+    The parser prefers a `Final answer:` line and normalizes percentage displays
+    to the ratio scale used by many ConvFinQA executed answers.
+    """
     answer_text = _extract_final_answer(answer)
     normalized_text = _normalize_text(answer_text)
     matches = list(_NUMBER_PATTERN.finditer(normalized_text))

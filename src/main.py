@@ -151,6 +151,8 @@ def run(
     )
     try:
         selected_records_path = selected_records_path or _selected_records_path_for(output_path)
+        # Fresh runs write the exact selected record order; resume runs reload it
+        # so random samples and all-train runs continue against the same records.
         selected_records = _selected_records_for_run(
             records=records,
             selected_records_path=selected_records_path,
@@ -196,6 +198,8 @@ def run(
             history: list[ChatTurn],
             question: str,
         ) -> str:
+            # Keep the CLI independent from the concrete answerer response shape;
+            # evaluation only needs the raw text prediction.
             return answerer.answer(record, history, question).text
 
         # Workers > 1 runs records concurrently, but each record still replays

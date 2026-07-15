@@ -73,7 +73,12 @@ def verify_answer(
     answer: str,
     evidence_snippets: Sequence[EvidenceSnippet],
 ) -> VerificationResult:
-    """Return a retry reason when the draft answer is locally suspicious."""
+    """Return a retry reason when the draft answer is locally suspicious.
+
+    Rules are ordered from formatting failures to reasoning failures. Each rule
+    is no-gold: it inspects the question, selected evidence, and draft answer,
+    but never `executed_answers`, `conv_answers`, or `turn_program`.
+    """
     final_answer = _extract_final_answer(answer)
     if final_answer is None:
         return _retry("The answer did not include a clean `Final answer:` line.")
@@ -158,6 +163,7 @@ def _is_refusal(answer: str) -> bool:
 
 
 def _find_unclean_final_answer_issue(final_answer: str) -> str | None:
+    """Detect final-answer lines that are likely to confuse automatic scoring."""
     numbers = _NUMBER_PATTERN.findall(final_answer)
     if len(numbers) > 1:
         return (
@@ -179,6 +185,7 @@ def _evidence_has_number(evidence_snippets: Sequence[EvidenceSnippet]) -> bool:
 
 
 def _has_percent_scale_mismatch(*, question: str, answer: str, final_answer: str) -> bool:
+    """Catch draft answers that calculated a percentage but omitted `%`."""
     if not _PERCENT_QUESTION_PATTERN.search(question):
         return False
     if "%" in final_answer:
@@ -195,6 +202,7 @@ def _find_competing_zero_selection_issue(
     final_answer: str,
     evidence_snippets: Sequence[EvidenceSnippet],
 ) -> str | None:
+    """Catch common zero-selection errors without looking at the gold answer."""
     final_value = _parse_number(final_answer)
     if final_value is None or not math.isclose(final_value, 0.0, abs_tol=1e-9):
         return None
@@ -257,6 +265,7 @@ def _evidence_has_nonzero_alternative_for_selected_label(
 
 
 def _find_denominator_issue(*, question: str, answer: str) -> str | None:
+    """Detect obvious total/part denominator direction issues."""
     if not _PORTION_OF_TOTAL_PATTERN.search(question):
         return None
 
@@ -281,6 +290,7 @@ def _find_denominator_issue(*, question: str, answer: str) -> str | None:
 
 
 def _find_calculation_mismatch(*, answer: str, final_answer: str) -> str | None:
+    """Compare a simple stated calculation with the final answer when possible."""
     final_value = _parse_number(final_answer)
     if final_value is None:
         return None

@@ -75,7 +75,12 @@ class EvidenceSnippet(BaseModel):
 
 
 def build_evidence_snippets(record: ConvFinQARecord) -> list[EvidenceSnippet]:
-    """Build deterministic evidence snippets from text and table context."""
+    """Build deterministic evidence snippets from text and table context.
+
+    Text snippets keep useful sentences/clauses, while table snippets keep one
+    financial row per snippet. The IDs are stable within a record and can be
+    referenced by prompts and v5 calculation plans.
+    """
     snippets: list[EvidenceSnippet] = []
 
     snippets.extend(_build_text_snippets(record.doc.pre_text, source="pre_text", start_index=len(snippets) + 1))
@@ -91,7 +96,7 @@ def select_candidate_snippets(
     current_question: str,
     limit: int = 30,
 ) -> list[EvidenceSnippet]:
-    """Use cheap lexical matching to choose reranker candidates."""
+    """Use cheap lexical matching to reduce the LLM reranker's search space."""
     scored = [
         (_score_snippet(snippet, history=history, current_question=current_question), index, snippet)
         for index, snippet in enumerate(snippets)
@@ -108,6 +113,9 @@ def select_relevant_evidence(
     candidate_limit: int = 30,
 ) -> list[EvidenceSnippet]:
     """Select final evidence snippets using lexical filtering plus reranking."""
+    # The first pass is deterministic and cheap; the second pass asks the model
+    # to rank only a small candidate set, which keeps the prompt short and makes
+    # evidence selection easier to inspect.
     candidates = select_candidate_snippets(
         snippets=snippets,
         history=history,
@@ -167,7 +175,12 @@ def select_reranked_snippets(
     reranker_response: str,
     final_limit: int = 8,
 ) -> list[EvidenceSnippet]:
-    """Parse reranker-selected IDs, falling back to candidate order."""
+    """Parse reranker-selected IDs, falling back to candidate order.
+
+    The fallback is important for robustness: if the reranker returns prose or
+    malformed IDs, the answer stage still receives the strongest lexical
+    candidates instead of failing the whole turn.
+    """
     snippets_by_id = {snippet.snippet_id: snippet for snippet in candidate_snippets}
     selected: list[EvidenceSnippet] = []
 
@@ -192,6 +205,7 @@ def format_evidence_snippets(snippets: Sequence[EvidenceSnippet]) -> str:
 
 
 def _build_text_snippets(text: str, source: str, start_index: int) -> list[EvidenceSnippet]:
+    """Split text into sentence snippets plus number-heavy clause snippets."""
     snippets: list[EvidenceSnippet] = []
     next_index = start_index
 
@@ -222,6 +236,7 @@ def _build_text_snippets(text: str, source: str, start_index: int) -> list[Evide
 
 
 def _build_table_snippets(record: ConvFinQARecord, start_index: int) -> list[EvidenceSnippet]:
+    """Represent each pre-extracted table row as one evidence snippet."""
     snippets: list[EvidenceSnippet] = []
     columns = list(record.doc.table.keys())
 
