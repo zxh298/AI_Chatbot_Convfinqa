@@ -15,7 +15,3 @@ __pycache__/
 .DS_Store
 
 .*cache
-
-
-
-uv.lock

@@ -15,9 +15,6 @@ brew install uv
 
 # set up env
 uv sync
-
-# add python package to env
-uv add <package_name>
 ```
 
 3. Create a local `.env` file in the root directory with:
@@ -99,7 +96,7 @@ Parameters:
 - `--max-records 500`: limit the run to 500 records from the input data; omit this to run the full split.
 - `--random-seed 42`: sample records reproducibly when `--max-records` is used.
 - `--version v1`: select the answer pipeline version (`v1`, `v2`, `v3`, `v4`, `v5`, or `v5a`).
-- `--workers 2`: run multiple records concurrently using 2 workders; turns inside each record still run sequentially.
+- `--workers 2`: run multiple records concurrently using 2 workers; turns inside each record still run sequentially.
 - `--output-path ...jsonl`: save raw model predictions to a JSONL file.
 
 This replays dataset `conv_questions` and writes one raw JSONL row per model answer. The run file stores predictions only; it does not store gold answers or correctness.
