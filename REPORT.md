@@ -373,13 +373,38 @@ flowchart LR
     D --> J[Interactive Chat Tool]
 ```
 
+The pipeline also includes an experimental v5a variant, which keeps v5 unchanged but adds a limited offline numeric fallback. This fallback is intended as a robustness layer when the LLM API call is unavailable. It generates simple numeric candidates using the selected evidence, scores them using keyword overlap, evidence rank, and domain heuristics. Then it converts the top candidate scores into a softmax-style confidence. The final answer is presented with a confidence score, as for the result inspection purpose. This lightweight fallback is only for showing how confidence-aware fallback behaviour could be added when the LLM call is unavailable.
+
 # Future Work
 
-Re-write this:
-A natural future extension is to add structured conversation-state memory on top of v5. The current system passes previous turns back as compact text, such as Final answer: 4.7, which is useful but still leaves reference resolution to the LLM. Since v5 already produces named values, evidence IDs, and calculation steps, a future v6 could persist these outputs as structured state, for example drawn_amount = 4.7 from T-33 or facility_amount = 150 from T-31. Later follow-up questions such as “what percentage did that amount represent?” could then reuse these explicit variables instead of relying only on natural-language history. This would directly target one of the main remaining limitations: ambiguous multi-turn state tracking.
+The most natural future extension is structured conversation-state memory as an extension of `v5`. Given `v5` already produces named values, evidence IDs, and calculation steps, thus a good future version could save these outputs as structured state. For example, saving table-cell grounding as a structured object. Later follow-up questions could then reuse explicit variables rather than natural-language history. So if there is more time, the next version will target on improvements of ambiguous multi-turn state tracking, while still avoiding a paper-like full pipeline rebuild and keeping the system lightweight and inspectable.
 
-Re-write this:
-dedicate table format
+A future Bayesian-inspired extension could follow the paper’s formulation [1] more directly:
+```text
+P(A | T, B, Qn) = Σ_i P(G_i | T, B, Q0, Q1, ..., Qn−1)
+```
+where each G_i is a candidate reasoning program that can produce answer A. So instead of trusting one generated plan, the system could calculate a score Score(G) using evidence match, operation fit, unit consistency etc, and calculate the posterior probability:
+```text
+P(G | context) = exp(score(G)) / sum over all candidates exp(score(candidate))
+```
+Then select the candidate program with highest posterior probability to answer the question. However, this may needs significant amount of work and likely hard to be verified and tested. 
+
+Lastly, in a real-world setting, an agent-based architecture could become useful once the task expands beyond the provided ConvFinQA setup. This prototype uses data that has relevant `record_id` and extracted table/text, which could not be available in reality. A well designed but constrained Agent system could use different tools to orchestrate the whole process. However, it is out of the scope of this work and this idea is more suitable for real-world financial QA.
+
+# AI Usage Declaration
+
+AI tools were used during this work as an implementation assistant. Codex [3] was used to help to draft and edit Python modules, generate unit tests, run evaluation commands, format Markdown tables, and summarize experimental results. The methodology, version design, interpretation of results, project scope, and final submitted report were directed and created by the author.
+
+# Reference
+[1] Chen, Zhiyu, Shiyang Li, Charese Smiley, Zhiqiang Ma, Sameena Shah, and William Yang Wang. "Convfinqa: Exploring the chain of numerical reasoning in conversational finance question answering." In Proceedings of the 2022 conference on empirical methods in natural language processing, pp. 6279-6292. 2022.
+
+[2] OpenAI. (2024, July 18). GPT-4o mini: Advancing cost-efficient intelligence. https://openai.com/index/gpt-4o-mini-advancing-cost-efficient-intelligence/
+
+[3] OpenAI. (n.d.). Codex in ChatGPT. https://openai.com/codex/
+
+<br>
+<br>
+<br>
 
 # Appendix
 ## 1. Prompt Evolution
@@ -508,23 +533,3 @@ In this example, `v4` used 4051/6.6 = 613.79 as the final answer, which has the 
   "answer": "answer"
 }
 ```
-
-## 3. AI usage in this report: 
-codex
-Use reference in the paper to show the pain point
-Format the table and evaluate the model accuracy
-
-Rewrite this:
-
-also avoided over-engineering because this is a 7-day prototype assignment, and the goal is to demonstrate disciplined modeling decisions rather than build the largest possible architecture. Since the dataset already provides the selected record, heavier designs such as corpus-level RAG, vector databases, multi-agent orchestration, or a full reimplementation of the paper’s DSL would add latency, complexity, and additional failure points without necessarily improving the core metric. Instead, I used a staged versioned design where each version targets an observed failure mode: v1 establishes the baseline, v2 improves grounding, v3 adds no-gold verification, v4 tests reasoning-pattern retrieval, and v5 adds deterministic execution for common arithmetic. This keeps the system easier to inspect, test, and compare while still making meaningful progress on the main ConvFinQA challenges.
-
-A graph representation could be a useful future extension: records, table cells, dialogue turns, extracted values, and calculation steps could be represented as nodes and edges. This may improve table-cell grounding and multi-turn state tracking. However, it was not used in this prototype because the assignment already provides the selected record, and a graph database would add substantial engineering complexity beyond the core modeling challenges targeted in this submission.
-
-
-
-
-
-# Reference
-[1] Chen, Zhiyu, Shiyang Li, Charese Smiley, Zhiqiang Ma, Sameena Shah, and William Yang Wang. "Convfinqa: Exploring the chain of numerical reasoning in conversational finance question answering." In Proceedings of the 2022 conference on empirical methods in natural language processing, pp. 6279-6292. 2022.
-
-[2] OpenAI. (2024, July 18). GPT-4o mini: Advancing cost-efficient intelligence. https://openai.com/index/gpt-4o-mini-advancing-cost-efficient-intelligence/
