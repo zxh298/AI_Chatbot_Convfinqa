@@ -24,11 +24,11 @@ Table 1 shows that the dataset contains more multi-turn conversations than singl
   </tr>
 </table>
 
-<p><strong>Table 1. Dialogue length distribution aross train and dev.</strong></p>
+<p><strong>Table 1. Dialogue length distribution across train and dev.</strong></p>
 
 </div>
 
-The types of gold program in the data shows the numberical reasoning is built from a small set of arithmetic operations. Together, as what Table 2 shows, subtraction and division account for more than 70% of the total, which matches the nature of many financial questions: computing differences, ratios, margins, and percentage changes.
+The types of gold program in the data shows the numerical reasoning is built from a small set of arithmetic operations. Together, as what Table 2 shows, subtraction and division account for more than 70% of the total, which matches the nature of many financial questions: computing differences, ratios, margins, and percentage changes.
 
 <div align="center">
 
@@ -70,11 +70,11 @@ The types of gold program in the data shows the numberical reasoning is built fr
   </tr>
 </table>
 
-<p><strong>Table 2. Gold program operation distribution aross train and dev.</strong></p>
+<p><strong>Table 2. Gold program operation distribution across train and dev.</strong></p>
 
 </div>
 
-As shown in the ConvFinQA paper, Table 3 summerises the main challenges that make ConvFinQA more difficult than simple questions answering. The main task requires the solutions to generate answers using the correct evidence, resolve conversational references across multiple turns, and perform accurate reasoning over many competing values [1]. These challenges motivates the version evolution: each version targets a different source of error, from evidence selection, pattern retrieval verification, and deterministic calculation execution.
+As shown in the ConvFinQA paper, Table 3 summarises the main challenges that make ConvFinQA more difficult than simple questions answering. The main task requires the solutions to generate answers using the correct evidence, resolve conversational references across multiple turns, and perform accurate reasoning over many competing values [1]. These challenges motivate the version evolution: each version targets a different source of error, from evidence selection, pattern retrieval verification, and deterministic calculation execution.
 
 <div align="center">
 
@@ -119,14 +119,14 @@ As shown in the ConvFinQA paper, Table 3 summerises the main challenges that mak
 
 Our solution reads the provided ConvFinQA dataset from the given JSON file, where each record already contains pre-extracted document text, a structured table, dialogue questions, gold answers, and metadata. The structured table object is converted into a readable row-oriented table or evidence snippets with IDs (see more details in Section Methodology), which are used by different versions of our solution. Model outputs and evaluation results are save as JSONL file: batch runs write one prediction per turn, and the evaluation step later reads those saved predictions, compares them against `executed_answers`, and writes scored results back to JSONL. This separation makes the pipeline reproducible because the result generation and scoring can be rerun independently. 
 
-In addition, a basic data leakage check was performed to understand how independent the `train` and `dev` splits are. We used LLM and tt founds that no exact same records are shared by both `train` and `dev`, but the data naturally contains repeated questions and similar reasoning patterns across different cases. Within each split, the `record_id` is unique, but there are some records were devrived from the same source PDF. As mentioned in the paper [1], this is expected in ConvFinQA because different conversations may come from the same financial page.
+In addition, a basic data leakage check was performed to understand how independent the `train` and `dev` splits are. We used LLM and tt founds that no exact same records are shared by both `train` and `dev`, but the data naturally contains repeated questions and similar reasoning patterns across different cases. Within each split, the `record_id` is unique, but there are some records were derived from the same source PDF. As mentioned in the paper [1], this is expected in ConvFinQA because different conversations may come from the same financial page.
 
 # Methodology
 
 ## Method Boundaries And Scoring Design
 Based on the dataset and the scope of the task, this solution does not use a full corpus-level RAG (Retrieval-Augmented Generation) framework. The assignment already provides the correct `record_id` for each conversation. As a result, the key challenge is not document retrieval but answering the question correctly within the selected record. A full RAG pipeline would require document indexing, chunk retrieval, vector search, and re-ranking. These components would increase engineering complexity and computational cost. However, they would not directly address the main challenges identified in this assignment, as shown in Table 3.
 
-The evaluation uses `executed_answers` instead of `turn_program`. The goal of this project is to answer financial questions correctly rather than reproducing the exact ConvFinQA annotations. In addition, `turn_program` represents only one possible reasoning path. Different reasoning processes can still lead to the same correct result. This situation is common in LLM-based systems. So we use `executed_answers` for strict scoring, and the solution generates information similar to `turn_program` which is used to make the reasoning inspectable and to execute the final arithmetic deterministically. The solution also has a numeric comparision function that considers decimal tolerance. This is an important function because 0.2085, 0.209 and 20.9% are actually same thing.
+The evaluation uses `executed_answers` instead of `turn_program`. The goal of this project is to answer financial questions correctly rather than reproducing the exact ConvFinQA annotations. In addition, `turn_program` represents only one possible reasoning path. Different reasoning processes can still lead to the same correct result. This situation is common in LLM-based systems. So we use `executed_answers` for strict scoring, and the solution generates information similar to `turn_program` which is used to make the reasoning inspectable and to execute the final arithmetic deterministically. The solution also has a numeric comparison function that considers decimal tolerance. This is an important function because 0.2085, 0.209 and 20.9% are actually same thing.
 
 The development process used a fixed sample of 500 records from the `train` dataset. The gold answers were hidden during testing, and the solution model had to generate the answers independently. This approach was necessary because evaluating multiple solution versions on the full `train` dataset would require significantly more LLM API calls, cost and runtime. The sample was selected using a fixed random seed which improves reproducibility. The sample size was also large enough to reveal the most common failure cases. The final evaluation uses the complete `dev` dataset which remains separate from development data. This separation provides a fair held-out comparison.
 
@@ -135,7 +135,7 @@ The solution is also integrated into the interactive chat tool (see README.md fo
 ## Iterative Solution Evolution
 A single large solution can make it difficult to identify which component causes an improvement or a regression. Therefore, the solution was developed through a series of controlled iterations. One main capability is introduced into each version which can then be compared directly with the previous version. This approach makes the development process more transparent and presents decision making process of the design clearer.
 
-The first version `v1` uses the selected `record_id` and constructs the complete record context. The context includes `pre_text`, `post_text`, table content, conversation history, and the current question. The system passes this context to the model together with the conversation history. This `v1` provides a reference point that later version could add corresponding functions that target the wrong evidence selection, incorrect value selection, arithmetic mistakes, messy final answers and multi-tun error propagation. The Table 4 show the results of running `v1` using the `train` sample. The challenges shown in the paper [1] can be grouped into a smaller set of observed error types (a LLM-assisted error analysis) which made the development priority clearer:
+The first version `v1` uses the selected `record_id` and constructs the complete record context. The context includes `pre_text`, `post_text`, table content, conversation history, and the current question. The system passes this context to the model together with the conversation history. This `v1` provides a reference point that later version could add corresponding functions that target the wrong evidence selection, incorrect value selection, arithmetic mistakes, messy final answers and multi-turn error propagation. Table 4 shows the results of running `v1` using the `train` sample. The challenges shown in the paper [1] can be grouped into a smaller set of observed error types (a LLM-assisted error analysis) which made the development priority clearer:
 
 <table>
   <thead>
@@ -186,7 +186,7 @@ The first version `v1` uses the selected `record_id` and constructs the complete
 
 <br>
 
-This analysis suggests two things: First, the largest source of error was Calculation / program errors , not only document retrieval. Second, grounding still had to come first because calculation cannot be correct if the wrong row or value is selected. Therefore the development order starts with a baseline, adds evidence grounding, verification/retry, then add reasoning-pattern retrieval, finally the deterministic execution of structured plans. Please see Section "1. Prompt Evolution" and "2. Version Comparision With Example" in Appendix for more details of implementation evolution between different versions. Table 5 shows the exact definition of each version, along with the corresponding main targets. One assumption here is the LLM-generated values and operations are mostly reasonable, for example, the evidence reranking and calculation plan generation etc. 
+This analysis suggests two things: First, the largest source of error was Calculation / program errors , not only document retrieval. Second, grounding still had to come first because calculation cannot be correct if the wrong row or value is selected. Therefore the development order starts with a baseline, adds evidence grounding, verification/retry, then add reasoning-pattern retrieval, finally the deterministic execution of structured plans. Please see Section "1. Prompt Evolution" and "2. Version Comparison With Example" in Appendix for more details of implementation evolution between different versions. Table 5 shows the exact definition of each version, along with the corresponding main targets. One assumption here is the LLM-generated values and operations are mostly reasonable, for example, the evidence reranking and calculation plan generation etc. 
 
 <table>
   <thead>
@@ -225,7 +225,7 @@ This analysis suggests two things: First, the largest source of error was Calcul
       <td>v3 + few-shot reasoning retrieval</td>
       <td>Calculation/program errors, especially reasoning-pattern uncertainty</td>
       <td>v4 retrieves similar solved train examples as operation-pattern hints, without using their numbers as evidence.</td>
-      <td>Uses similar solved examples as reasoning-pattern hints to anwswer the question given current value.</td>
+      <td>Uses similar solved examples as reasoning-pattern hints to answer the question given current value.</td>
     </tr>
     <tr>
       <td><code>v5</code></td>
@@ -352,13 +352,13 @@ The dev results (shown as in Table 8) follows the same general trend as the trai
 
 <br>
 
-In addition to batch evaluation on gold ConvFinQA turns, the interactive chat tool was used for qualitative smoke testing with user-defined questions (not included in the original `train` or `dev` data) over selected records. Due to time limit, only a small number of such questions were tested. The results were broadly consistent with the dev results, showing the later versions performed better. However, all the versions were struggling of answering highly vague user-defined questions, especially the question did not clearly specify the time period, target values or has long turns.
+In addition to batch evaluation on gold ConvFinQA turns, the interactive chat tool was used for qualitative smoke testing with user-defined questions (not included in the original `train` or `dev` data) over selected records. Due to time limit, only a small number of such questions were tested. The results were broadly consistent with the dev results, showing the later versions performed better. However, all versions struggled to answer highly vague user-defined questions, especially the question did not clearly specify the time period, target values or has long turns.
 
 The remaining limitations of this prototype work are clear. First, as mentioned in previous sections, some operations (e.g., value extraction) is still partly driven by LLM. This means if the LLM model selects the wrong value, the local execuition will compute the next answer with the wrong input. Similarly, the compute operations are also driven by LLM. Even the executor prevents arithmetic mistakes, but it cannot always know whether the intended operation should be subtraction, division, or a percentage conversion. Third, the table-cell grounding is working but not fully structured. The solution does not build a formal table graph, which could increase the chance of selecting the wrong number. Next, the multi-turn state is passed as text history rather than stored as named structured variables. This still could make the long reference chains such as "that total" can still fail. Finally, the verification is still heuristic rather than a real financial-reasoning verifier, so it only catches common failures but does not guarantee the correctness.
 
 # System Design And Tooling
 
-This prototype has an command-line driven pipeline works for both the interactive chat and batch processing. As what is shown in the highlevel architecture diagram below, it starts with the data loader, formats and constructure the prompt, runs the user selected version (`v1` to `v5`), saves the raw output to JSONL, and evaluates the answers separately against `executed_answers`. The gpt-4o-mini [2] is used as the main LLM model because of cost and runtime limitations. A parallelisation function is built for running the batch processing, while preserving sequential turn order inside each conversation. The same pipeline also connects to the interactive chat tool, and user can run the selected version to see the answer for a given question. See more details in the README.md.
+This prototype has an command-line driven pipeline works for both the interactive chat and batch processing. As shown in the high-level architecture diagram below, it starts with the data loader, formats and constructs the prompt, runs the user selected version (`v1` to `v5`), saves the raw output to JSONL, and evaluates the answers separately against `executed_answers`. The gpt-4o-mini [2] is used as the main LLM model because of cost and runtime limitations. A parallelisation function is built for running the batch processing, while preserving sequential turn order inside each conversation. The same pipeline also connects to the interactive chat tool, and user can run the selected version to see the answer for a given question. See more details in the README.md.
 
 ```mermaid
 flowchart LR
@@ -459,7 +459,7 @@ Similar solved examples:
 For this version, also output a machine-readable Calculation plan JSON block before the final answer. Allowed ops are select, add, subtract, multiply, divide, negate, abs, max, and min. The code will execute this JSON locally.
 ```
 
-## 2. Version Comparision With Example
+## 2. Version Comparison With Example
 
 ### v1 vs v2: Better Evidence Selection
 ```text
@@ -508,7 +508,7 @@ Question sequence:
 - percentage change
 ```
 
-The table in raw data is embedded after a long pre_text about floating-rate notes and capital lease obligations. The question says “vehicles under capital lease”, but the table label is just vehicles under the section “property, plant and equipment subject to capital leases”. `v3` failed to connect the section title with the table row, and returnd "not enough information". For this case, `v4` retrieved similar solved turns with the similar pattern: select two year-specific values, subtract them, then divide the change by the earlier value for a percentage question. So `v4` returned the correct value: selected `70` and `68`, computed `70 - 68 = 2`, then `2 / 68 = 2.9%`.
+The table in raw data is embedded after a long pre_text about floating-rate notes and capital lease obligations. The question says “vehicles under capital lease”, but the table label is just vehicles under the section “property, plant and equipment subject to capital leases”. `v3` failed to connect the section title with the table row, and returned "not enough information". For this case, `v4` retrieved similar solved turns with the similar pattern: select two year-specific values, subtract them, then divide the change by the earlier value for a percentage question. So `v4` returned the correct value: selected `70` and `68`, computed `70 - 68 = 2`, then `2 / 68 = 2.9%`.
 
 ### v4 -> v5: Explicit Calculation Plans Helps Local Execution
 
@@ -518,7 +518,7 @@ Turn index: 2
 Question: What is the value of long term debt in 2016 divided by the value of total debt?
 Gold executed answer: 0.61379
 ```
-In this example, `v4` used 4051/6.6 = 613.79 as the final answer, which has the denominator in a wrong scale, i.e., the 6.6 means $6.6 billion, but 4051 is in million. In contrast, `v5` used a structure calculation plan which stored the two numbers in the same scale, which helped the model get the correct answer 4051/6600 = 0.61379.
+In this example, `v4` used 4051/6.6 = 613.79 as the final answer, which has the denominator in a wrong scale, i.e., the 6.6 means $6.6 billion, but 4051 is in million. In contrast, `v5` used a structured calculation plan which stored the two numbers in the same scale, which helped the model get the correct answer 4051/6600 = 0.61379.
 
 `v5` plan structure:
 
