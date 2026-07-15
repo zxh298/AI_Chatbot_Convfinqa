@@ -2,6 +2,13 @@
 
 ## Summary
 
+v1 = full-record baseline
+v2 = full-record baseline + record-local evidence selection
+v3 = evidence selection + no-gold verification retry
+v4 = evidence selection + no-gold verification retry + train-example reasoning retrieval
+v5 = evidence selection + no-gold verification retry + structured calculation-plan execution
+v5a = v5 + limited offline numeric fallback
+
 This project builds a record-aware ConvFinQA question-answering prototype. The assignment data already gives a selected `record_id`, so I treated the main problem as grounded reasoning inside one financial record rather than open-ended retrieval across the whole dataset.
 
 The implementation evolved in three steps:
@@ -1458,6 +1465,37 @@ Including gold answers from train is acceptable as few-shot demonstration, but m
 The prompt must explicitly say examples are patterns only and all current numbers must come from the current record.
 ```
 
+Dataset-size check for current-record retrieval:
+
+```text
+Measured over train + dev records after formatting each record as prompt context.
+records: 3458
+```
+
+| Metric | Words per formatted record |
+| --- | ---: |
+| min | 95 |
+| mean | 707 |
+| median | 705 |
+| p90 | 998 |
+| p95 | 1093 |
+| p99 | 1551 |
+| max | 2362 |
+
+| Metric | Table rows |
+| --- | ---: |
+| median | 5 |
+| p95 | 9 |
+| max | 19 |
+
+Interpretation:
+
+```text
+Each record is a single filing excerpt plus one small table, and the formatted context comfortably fits in a modern LLM context window.
+Because the current record is small, embeddings/vector-store retrieval over the current document is unnecessary.
+Lightweight evidence selection can still help focus the model, but full chunking/vector RAG is not needed for context length.
+```
+
 ## Paper Pain Points And Our Responses
 
 This table maps the main paper/ConvFinQA pain points to the relevant paper locations and our current response.
@@ -1522,6 +1560,157 @@ Main reading:
 v2 gives a small overall gain over v1, mostly from evidence helping number selection.
 v3 is the clearer jump: +2.4 points over v2 overall.
 The v3 gain is strongest on program questions, hybrid first-part questions, and deeper turns.
+```
+
+### V4 Train-500 Update
+
+After completing the fair v4 train-500 run with train-sample leakage controls:
+
+| Breakdown | v1 | v2 | v3 | v4 | v2-v1 | v3-v2 | v4-v3 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| full results | 1223/1827 (66.9%) | 1231/1827 (67.4%) | 1275/1827 (69.8%) | 1323/1827 (72.4%) | +0.4 pts | +2.4 pts | +2.6 pts |
+| Number selection questions | 505/640 (78.9%) | 514/640 (80.3%) | 522/640 (81.6%) | 537/640 (83.9%) | +1.4 pts | +1.3 pts | +2.3 pts |
+| Program questions | 718/1187 (60.5%) | 717/1187 (60.4%) | 753/1187 (63.4%) | 786/1187 (66.2%) | -0.1 pts | +3.0 pts | +2.8 pts |
+| Simple conversations | 782/1163 (67.2%) | 798/1163 (68.6%) | 819/1163 (70.4%) | 862/1163 (74.1%) | +1.4 pts | +1.8 pts | +3.7 pts |
+| Hybrid conversations | 441/664 (66.4%) | 433/664 (65.2%) | 456/664 (68.7%) | 461/664 (69.4%) | -1.2 pts | +3.5 pts | +0.8 pts |
+| Hybrid first part | 258/363 (71.1%) | 248/363 (68.3%) | 271/363 (74.7%) | 280/363 (77.1%) | -2.8 pts | +6.3 pts | +2.5 pts |
+| Hybrid second part | 183/301 (60.8%) | 185/301 (61.5%) | 185/301 (61.5%) | 181/301 (60.1%) | +0.7 pts | +0.0 pts | -1.3 pts |
+| Turn 0 | 385/500 (77.0%) | 389/500 (77.8%) | 392/500 (78.4%) | 403/500 (80.6%) | +0.8 pts | +0.6 pts | +2.2 pts |
+| Turn 1 | 349/500 (69.8%) | 348/500 (69.6%) | 358/500 (71.6%) | 377/500 (75.4%) | -0.2 pts | +2.0 pts | +3.8 pts |
+| Turn 2 | 238/376 (63.3%) | 240/376 (63.8%) | 250/376 (66.5%) | 261/376 (69.4%) | +0.5 pts | +2.7 pts | +2.9 pts |
+| Turn 3 | 153/266 (57.5%) | 146/266 (54.9%) | 165/266 (62.0%) | 174/266 (65.4%) | -2.6 pts | +7.1 pts | +3.4 pts |
+| Turn 4 | 67/132 (50.8%) | 70/132 (53.0%) | 76/132 (57.6%) | 73/132 (55.3%) | +2.3 pts | +4.5 pts | -2.3 pts |
+
+Story from the table:
+
+```text
+v1 -> v2 showed that evidence selection alone is useful but weak.
+v2 -> v3 showed that verification/retry is a stronger improvement.
+v3 -> v4 showed that retrieval-guided reasoning examples can add another meaningful gain, but with tradeoffs.
+```
+
+Interpretation:
+
+| Observation | Meaning |
+| --- | --- |
+| v2 only improves `+0.4 pts` over v1. | Evidence reranking helps some cases, but the cost/latency is hard to justify by itself. |
+| v3 improves `+2.4 pts` over v2. | No-gold verification retry is a strong, practical improvement. This supports the failure analysis around dirty answers, zero selection, and suspicious calculations. |
+| v4 improves `+2.6 pts` over v3. | Similar train examples help on this train-500 setting after leakage control. The v4 hypothesis is empirically promising. |
+| v4 improves number selection by `+2.3 pts` and program questions by `+2.8 pts` over v3. | Retrieval examples seem to help both lookup/value-selection and reasoning/calculation patterns. |
+| v4 improves simple conversations by `+3.7 pts` over v3. | Examples help when the conversation structure is less complex. |
+| v4 barely improves hybrid overall by `+0.8 pts` and regresses hybrid second part by `-1.3 pts`. | For harder multi-part conversational dependencies, retrieved examples may add noise or fail to resolve the real context dependency. |
+| v4 improves Turns 0-3, but regresses Turn 4. | It helps earlier/mid turns but is less reliable deeper in the conversation. |
+
+Honest conclusion:
+
+```text
+v3 is the cleanest robust improvement.
+v4 is promising and empirically better on both train-500 and held-out dev, but it is more complex.
+The version progression shows disciplined iteration:
+1. establish baseline,
+2. improve grounding,
+3. add no-gold verification,
+4. test retrieval-guided reasoning as a controlled extension.
+```
+
+### Dev Validation Results
+
+Run setting:
+
+```text
+split: dev
+records: 421
+turns: 1490
+model: gpt-4o-mini
+metric: strict execution accuracy against executed_answers
+```
+
+| Breakdown | v1 | v2 | v3 | v4 | v2-v1 | v3-v2 | v4-v3 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| full results | 987/1490 (66.2%) | 1022/1490 (68.6%) | 1052/1490 (70.6%) | 1070/1490 (71.8%) | +2.4 pts | +2.0 pts | +1.2 pts |
+| Number selection questions | 377/487 (77.4%) | 395/487 (81.1%) | 400/487 (82.1%) | 394/487 (80.9%) | +3.7 pts | +1.0 pts | -1.2 pts |
+| Program questions | 610/1003 (60.8%) | 627/1003 (62.5%) | 652/1003 (65.0%) | 676/1003 (67.4%) | +1.7 pts | +2.5 pts | +2.4 pts |
+| Simple conversations | 724/1052 (68.8%) | 754/1052 (71.7%) | 768/1052 (73.0%) | 787/1052 (74.8%) | +2.9 pts | +1.3 pts | +1.8 pts |
+| Hybrid conversations | 263/438 (60.0%) | 268/438 (61.2%) | 284/438 (64.8%) | 283/438 (64.6%) | +1.2 pts | +3.6 pts | -0.2 pts |
+| Hybrid conversations first part | 154/250 (61.6%) | 154/250 (61.6%) | 162/250 (64.8%) | 159/250 (63.6%) | +0.0 pts | +3.2 pts | -1.2 pts |
+| Hybrid conversations second part | 109/188 (58.0%) | 114/188 (60.6%) | 122/188 (64.9%) | 124/188 (66.0%) | +2.6 pts | +4.3 pts | +1.1 pts |
+| Turn 0 | 306/421 (72.7%) | 314/421 (74.6%) | 314/421 (74.6%) | 322/421 (76.5%) | +1.9 pts | +0.0 pts | +1.9 pts |
+| Turn 1 | 294/421 (69.8%) | 300/421 (71.3%) | 309/421 (73.4%) | 313/421 (74.3%) | +1.5 pts | +2.1 pts | +0.9 pts |
+| Turn 2 | 192/305 (63.0%) | 196/305 (64.3%) | 206/305 (67.5%) | 208/305 (68.2%) | +1.3 pts | +3.2 pts | +0.7 pts |
+| Turn 3 | 127/211 (60.2%) | 138/211 (65.4%) | 143/211 (67.8%) | 149/211 (70.6%) | +5.2 pts | +2.4 pts | +2.8 pts |
+| Turn 4 | 56/108 (51.9%) | 63/108 (58.3%) | 65/108 (60.2%) | 63/108 (58.3%) | +6.4 pts | +1.9 pts | -1.9 pts |
+| Turn 5 | 11/20 (55.0%) | 10/20 (50.0%) | 13/20 (65.0%) | 13/20 (65.0%) | -5.0 pts | +15.0 pts | +0.0 pts |
+| Turn 6 | 1/3 (33.3%) | 1/3 (33.3%) | 2/3 (66.7%) | 2/3 (66.7%) | +0.0 pts | +33.4 pts | +0.0 pts |
+| Turn 7 | 0/1 (0.0%) | 0/1 (0.0%) | 0/1 (0.0%) | 0/1 (0.0%) | +0.0 pts | +0.0 pts | +0.0 pts |
+
+Main reading:
+
+```text
+v1 -> v2 gives a solid +2.4 point dev gain, stronger than the train-500 gain.
+v2 -> v3 adds another +2.0 points, mainly improving program and hybrid questions.
+v3 -> v4 adds +1.2 points overall, mostly from program questions and simple conversations.
+v4 is best overall on dev: 1070/1490 = 71.8%.
+```
+
+Nuance:
+
+```text
+v4 regresses number-selection questions slightly versus v3, but improves program questions enough to win overall.
+The dev result validates the train-500 direction: every version step improves headline accuracy, and v4 remains the best version.
+```
+
+### V5 Dev Update
+
+After completing the v5 dev run:
+
+```text
+split: dev
+records: 421
+turns: 1490
+model: gpt-4o-mini
+metric: strict execution accuracy against executed_answers
+v5 eval path: outputs/dev_v5/eval_dev_gpt4o_mini_v5_strict_executed.jsonl
+```
+
+| Breakdown | v1 | v2 | v3 | v4 | v5 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Full results | 987/1490 (66.2%) | 1022/1490 (68.6%) | 1052/1490 (70.6%) | 1070/1490 (71.8%) | 1066/1490 (71.5%) |
+| Number selection | 377/487 (77.4%) | 395/487 (81.1%) | 400/487 (82.1%) | 394/487 (80.9%) | 378/487 (77.6%) |
+| Program | 610/1003 (60.8%) | 627/1003 (62.5%) | 652/1003 (65.0%) | 676/1003 (67.4%) | 688/1003 (68.6%) |
+| Simple | 724/1052 (68.8%) | 754/1052 (71.7%) | 768/1052 (73.0%) | 787/1052 (74.8%) | 779/1052 (74.0%) |
+| Hybrid | 263/438 (60.0%) | 268/438 (61.2%) | 284/438 (64.8%) | 283/438 (64.6%) | 287/438 (65.5%) |
+| Hybrid first | 154/250 (61.6%) | 154/250 (61.6%) | 162/250 (64.8%) | 159/250 (63.6%) | 154/250 (61.6%) |
+| Hybrid second | 109/188 (58.0%) | 114/188 (60.6%) | 122/188 (64.9%) | 124/188 (66.0%) | 133/188 (70.7%) |
+
+Turn-level:
+
+| Turn | v1 | v2 | v3 | v4 | v5 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Turn 0 | 306/421 (72.7%) | 314/421 (74.6%) | 314/421 (74.6%) | 322/421 (76.5%) | 312/421 (74.1%) |
+| Turn 1 | 294/421 (69.8%) | 300/421 (71.3%) | 309/421 (73.4%) | 313/421 (74.3%) | 313/421 (74.3%) |
+| Turn 2 | 192/305 (63.0%) | 196/305 (64.3%) | 206/305 (67.5%) | 208/305 (68.2%) | 208/305 (68.2%) |
+| Turn 3 | 127/211 (60.2%) | 138/211 (65.4%) | 143/211 (67.8%) | 149/211 (70.6%) | 151/211 (71.6%) |
+| Turn 4 | 56/108 (51.9%) | 63/108 (58.3%) | 65/108 (60.2%) | 63/108 (58.3%) | 66/108 (61.1%) |
+| Turn 5 | 11/20 (55.0%) | 10/20 (50.0%) | 13/20 (65.0%) | 13/20 (65.0%) | 14/20 (70.0%) |
+| Turn 6 | 1/3 (33.3%) | 1/3 (33.3%) | 2/3 (66.7%) | 2/3 (66.7%) | 2/3 (66.7%) |
+| Turn 7 | 0/1 (0.0%) | 0/1 (0.0%) | 0/1 (0.0%) | 0/1 (0.0%) | 0/1 (0.0%) |
+
+Main reading:
+
+```text
+v4 remains the best overall dev score: 1070/1490 = 71.8%.
+v5 is very close overall: 1066/1490 = 71.5%, only 4 turns behind v4.
+v5 improves program questions over v4: 688/1003 = 68.6% versus 676/1003 = 67.4%.
+v5 also improves hybrid conversations and later-turn performance, especially hybrid second-part questions.
+v5 regresses number-selection questions, simple conversations, and Turn 0 compared with v4.
+```
+
+Interpretation:
+
+```text
+v4 is still the best pure accuracy version on dev.
+v5 is the better engineering/auditability version: it executes structured calculation plans, exposes values and evidence ids, and reduces dependence on free-text arithmetic.
+For reporting, v5 should be framed as a structured-execution improvement rather than a headline accuracy win.
 ```
 
 ### Solving V1's Original Errors
@@ -1602,6 +1791,450 @@ For a real industry decision, we would still want repeated runs, a confidence in
 For this assignment, v3's +2.8 points over v1 is a credible improvement story.
 ```
 
+## V4 Implementation
+
+Implemented v4 as:
+
+```text
+v4 = v3 + lightweight train-example retrieval
+```
+
+What changed:
+
+| Component | v4 behavior |
+| --- | --- |
+| Current-record evidence | Same as v2/v3: record-local evidence snippets plus LLM reranking. |
+| Verification retry | Same as v3: one no-gold retry when the draft answer looks suspicious. |
+| Train-example retrieval | New: local lexical retrieval over solved train turns, with no vector DB and no extra API call. |
+| Prompt | Adds a compact "Similar solved train examples" block only for v4. |
+| Inspection | `chat --show-examples` prints the retrieved train examples used by v4. |
+
+Guardrails:
+
+```text
+Retrieve only from train examples.
+For dev evaluation, retrieving from train is allowed.
+For train-sample evaluation, exclude every selected evaluation record/page from the retrieval pool.
+Also exclude the current record_id and same underlying PDF page at retrieval time.
+Use retrieved examples only as reasoning-pattern hints.
+Do not copy numbers from retrieved examples.
+The current answer must still come from the selected record and selected evidence.
+```
+
+Implementation files:
+
+```text
+src/example_retrieval.py: builds the lexical train-example index and retrieves examples, excluding the current record/page.
+src/answers.py: adds AnswerVersion.V4, injects retrieved examples before answering, and returns them for inspection.
+src/prompts.py: formats examples into the prompt only when v4 provides them.
+src/main.py: exposes --version v4 for chat/run, --show-examples for chat inspection, and removes selected train-evaluation pages from the v4 retrieval pool.
+tests/test_example_retrieval.py: covers retrieval, same-record/page exclusion, and formatting guardrails.
+tests/test_evaluation.py: covers the train-sample no-leakage retrieval pool and dev-from-train retrieval pool.
+```
+
+## V5 Implementation: Structured Calculation Execution
+
+Implemented v5 as:
+
+```text
+v5 = evidence selection + no-gold verification retry + auditable structured calculation execution
+```
+
+This means v5 keeps:
+
+```text
+record-local evidence selection
++ no-gold verification retry
++ deterministic execution of a model-proposed calculation plan
+```
+
+The design intentionally builds v5 on v3 rather than v4. V4's retrieved train examples are useful, but they add prompt length, retrieval-pool guardrails, and possible example noise. V5 is a cleaner test of whether deterministic arithmetic helps after evidence selection and verification.
+
+Formula:
+
+Instead of trusting free-text arithmetic, v5 asks the model to output a small auditable JSON calculation plan. The important change from the first v5 draft is that source values are named and can point back to selected evidence:
+
+```json
+{
+  "values": [
+    {"id": "current_revenue", "value": 206588, "evidence": "E1"},
+    {"id": "prior_revenue", "value": 181001, "evidence": "E2"}
+  ],
+  "steps": [
+    {"id": "change", "op": "subtract", "args": ["current_revenue", "prior_revenue"]},
+    {"id": "change_rate", "op": "divide", "args": ["change", "prior_revenue"]}
+  ],
+  "answer": "change_rate"
+}
+```
+
+The local executor computes:
+
+```text
+current_revenue = 206588 from E1
+prior_revenue = 181001 from E2
+change = current_revenue - prior_revenue = 25587
+change_rate = change / prior_revenue = 0.14136
+answer = change_rate
+Final answer: 0.14136
+```
+
+This makes v5 less paper-like than the raw operation-only draft. The paper-style program view is mostly:
+
+```text
+divide(subtract(206588, 181001), 181001)
+```
+
+The revised v5 view is:
+
+```text
+extract named evidence-grounded financial variables -> execute a small calculation graph
+```
+
+The executor still supports the old draft schema for backwards compatibility:
+
+```json
+{
+  "steps": [
+    {"id": 0, "op": "subtract", "args": [206588, 181001]},
+    {"id": 1, "op": "divide", "args": ["#0", 181001]}
+  ],
+  "answer": "#1"
+}
+```
+
+Supported operations:
+
+| Operation | Formula |
+| --- | --- |
+| `select(x)` | `x` |
+| `add(a, b)` | `a + b` |
+| `subtract(a, b)` | `a - b` |
+| `multiply(a, b)` | `a * b` |
+| `divide(a, b)` | `a / b` |
+| `negate(x)` | `-x` |
+| `abs(x)` | `|x|` |
+| `max(...)` | maximum argument |
+| `min(...)` | minimum argument |
+
+Step references can use semantic ids such as `"change"` and `"change_rate"`. Old numeric step references such as `"#0"` and `"#1"` are still accepted.
+
+Common ConvFinQA formulas:
+
+```text
+difference = subtract(current, previous)
+percentage change = divide(subtract(current, previous), previous)
+part of total = divide(part, total)
+maximum allowed amount = multiply(base, rate)
+```
+
+For percentage, portion, ratio, and rate questions, v5 prefers executable ratio scale:
+
+```text
+4.7 / 150 = 0.03133
+```
+
+not display percent form:
+
+```text
+3.133%
+```
+
+Implementation files:
+
+```text
+src/prompts.py: when use_structured_calculation=True, asks for an auditable Calculation plan JSON block with named values and optional evidence ids.
+src/calculation_plan.py: validates and executes the JSON plan with a closed operation set, named source values, semantic step ids, and old numeric step references.
+src/offline_fallback.py: provides a limited offline numeric fallback that generates simple v5-shaped candidates from selected evidence, scores them, and returns an answer only when confidence is high enough.
+src/answers.py: wires AnswerVersion.V5 for clean structured execution and AnswerVersion.V5A for the limited offline fallback variant.
+src/main.py: exposes --version v5 and --version v5a in chat/run.
+tests/test_calculation_plan.py: covers named values, evidence ids, step references, final-answer replacement, duplicate ids, and invalid-plan fallback.
+tests/test_offline_fallback.py: covers the no-LLM fallback path for simple selection, capacity multiplication, and low-confidence abstention.
+tests/test_answer_versions.py: confirms v5 stays clean while only v5a uses offline fallback.
+tests/test_evaluation.py: confirms v5/v5a do not use the v4 train-example retrieval pool.
+```
+
+Answer flow:
+
+```text
+1. Select record-local evidence, same as v2/v3.
+2. Ask the model for Target, Values, Operation, Calculation plan JSON, Final answer, and Calculation.
+3. Run the v3 no-gold verifier/retry if the draft looks suspicious.
+4. Extract and validate the calculation-plan JSON.
+5. Execute the plan locally.
+6. Replace the model's Final answer line with the deterministic result.
+```
+
+## V5A Implementation: Limited Offline Fallback
+
+Implemented v5a as:
+
+```text
+v5a = v5 + limited offline numeric fallback
+```
+
+This keeps v5 clean for the main structured-execution experiment and uses v5a for robustness/confidence exploration.
+
+Offline fallback flow:
+
+```text
+1. Trigger only for v5a when the OpenAI call fails or no executable v5a plan is found.
+2. If evidence reranking cannot call the API, use lexical candidate evidence selection.
+3. Extract numeric values and nearby labels from selected evidence.
+4. Generate simple candidate plans: select, divide, subtract, and multiply-by-rate.
+5. Execute candidates with the same calculation-plan executor.
+6. Score candidates using evidence rank, label/question overlap, operation cues, date penalties, zero-value penalties, and domain-specific cues.
+7. Return the top candidate only if confidence is high enough; otherwise abstain with `unable to determine with offline fallback`.
+```
+
+This covers a limited modeling fallback strategy:
+
+```text
+The system can still answer simple numeric selection/arithmetic cases when the LLM is unavailable, but it does not claim to solve complex ConvFinQA reasoning offline.
+```
+
+This is not full ConvFinQA DSL generation. The model still chooses the relevant values and operation, but code performs the final arithmetic. The goal is to reduce errors where the model found the right numbers but produced the wrong final calculation or wrong percentage scale.
+
+Why v5 may help:
+
+| Error pattern | V5 behavior |
+| --- | --- |
+| Right values, arithmetic slip | Local execution computes the plan exactly. |
+| Percent display instead of ratio scale | Prompt asks for ratio-scale plans such as `divide(part, total)`. |
+| Final answer contradicts stated calculation | The executed plan replaces the final answer. |
+| Rounding / formatting drift | `_format_number` writes a compact deterministic numeric value. |
+
+Limitations:
+
+| Limitation | Meaning |
+| --- | --- |
+| Wrong values | The executor will faithfully compute the wrong selected values. |
+| Wrong operation | The executor will faithfully compute the wrong operation. |
+| Missing or invalid JSON plan | V5 falls back to the original model answer. |
+| Non-numeric answers | The structured executor is only useful for numeric cases. |
+
+Review note before large runs:
+
+```text
+The current extractor executes the first valid calculation-plan-shaped JSON object in the answer.
+Before expensive v5 runs, it should be hardened to prefer JSON following the explicit "Calculation plan JSON:" label.
+It may also need a policy decision on whether {"steps":[],"answer":0} is acceptable for number-selection cases.
+```
+
+Future extension: if v5 beats v3 cleanly, a later version can test combining v5 with v4-style train-example retrieval.
+
+## Future V6: Structured Conversation State
+
+A natural v6 direction is:
+
+```text
+v6 = v5 + structured conversation-state memory
+```
+
+This is easier to add after v5 because v5 already introduces a small DAG-like calculation plan instead of only free-text answers. For example:
+
+```json
+{
+  "values": [
+    {"id": "drawn_amount", "value": 4.7, "evidence": "T-33"},
+    {"id": "credit_facility_amount", "value": 150, "evidence": "T-31"}
+  ],
+  "steps": [
+    {"id": "ratio", "op": "divide", "args": ["drawn_amount", "credit_facility_amount"]}
+  ],
+  "answer": "ratio"
+}
+```
+
+This is effectively:
+
+```text
+drawn_amount ┐
+              ├─ divide -> ratio
+facility_amount ┘
+```
+
+Because the plan exposes named values, evidence ids, and dependencies, v6 could persist useful nodes as structured conversation state:
+
+```json
+{
+  "turn": 2,
+  "variables": {
+    "drawn_amount": 4.7,
+    "credit_facility_amount": 150,
+    "ratio": 0.03133
+  },
+  "evidence": {
+    "drawn_amount": "T-33",
+    "credit_facility_amount": "T-31"
+  }
+}
+```
+
+This would help later questions such as:
+
+```text
+what percentage, then, did that amount represent?
+```
+
+Instead of relying only on compact text history like `Final answer: 4.7`, v6 could resolve:
+
+```text
+that amount = drawn_amount
+denominator = credit_facility_amount
+operation = drawn_amount / credit_facility_amount
+```
+
+So the extension path is:
+
+```text
+v5: build and execute a calculation DAG for one turn.
+v6: persist useful DAG nodes as structured state across turns.
+```
+
+This targets one of the largest remaining unsolved modeling gaps after grounding, verification, and deterministic execution: ambiguous multi-turn state tracking.
+
+## Debuggability And Verification
+
+The implementation is intentionally easier to debug than a heavier agent-style system.
+
+| Design choice | Why it helps |
+| --- | --- |
+| Versioned pipeline | Compare `v1`, `v3`, `v4`, and `v5` to see which change caused what. |
+| Raw run files | Predictions are saved before scoring, so model outputs can be inspected directly. |
+| Separate evaluation | Parser/scoring changes can be tested without rerunning model calls. |
+| Selected evidence display | `--show-evidence` shows whether the model saw the right facts. |
+| v4 example display | `--show-examples` shows which train reasoning examples were retrieved. |
+| v5 JSON plans | Values, evidence ids, operations, and executed answers are inspectable. |
+| v5a fallback confidence | When fallback triggers, it reports confidence and candidate-derived output. |
+| Unit tests | Tests cover parsing, evidence, verification, calculation plans, fallback, and evaluation. |
+| Thin CLI | `main.py` delegates behavior to focused modules. |
+| No hidden agent loop | There is no opaque multi-agent planning loop changing behavior unpredictably. |
+
+Typical debug path:
+
+```text
+1. Did evidence selection find the right snippets?
+2. Did the prompt produce the right values?
+3. Did verification retry when it should?
+4. Did v5 produce valid JSON?
+5. Did the executor compute the right value?
+6. Did evaluation parse the final answer correctly?
+```
+
+The most debuggable path is v5 because each answer can expose:
+
+```text
+values
+evidence ids
+operation
+calculation plan JSON
+final answer
+```
+
+When v5 fails, the failure can usually be localized to one of:
+
+```text
+wrong evidence
+wrong value extraction
+wrong operation
+bad JSON
+executor issue
+parser issue
+```
+
+This is a useful assignment signal: the solution is not just more complex, it is inspectable and verifiable.
+
+## Development Evidence Trail
+
+This section records the observed examples/statistics that triggered each
+version evolution, plus the within-version tweaks made during development.
+
+### Version Evolution Drivers
+
+| Step | Observed example / statistic | What it told us | Decision |
+| --- | --- | --- | --- |
+| v1 baseline | v1 scored `1223/1827 (66.9%)` on 500 random42 train records. | Full-record prompting works reasonably, but leaves many errors. | Keep v1 as the baseline. |
+| v1 error analysis | Early error counts: calculation/program `309`, ratio/percentage `231`, number-selection `110`, refusal/non-numeric `65`. | Errors were not only missing context; there were also wrong operations, formatting, and arithmetic issues. | Add focused improvements instead of jumping straight to heavy program generation. |
+| v1 -> v2 | `Double_C/2008/page_217.pdf`, Turn 0: v1 used wrong partial values and answered about `0.26`; gold was `0.30895`. | The model sometimes needed focused evidence and the right numerator/denominator. | Add record-local evidence selection. |
+| v2 result | v2 scored `1231/1827 (67.4%)`, only `+0.4 pts` over v1. | Evidence helped, but not enough by itself. | Treat v2 as useful but not final. |
+| v2 regression example | `Double_ETR/2016/page_424.pdf`, Turn 2: v1 got `3.13%` correct, while v2 followed the wrong `cash borrowings = 0` interpretation and answered `0`. | Evidence can reinforce the wrong interpretation. Need verification, not just retrieval. | Build v3 verification retry. |
+| v2 -> v3 | `Double_ETR`, Turn 0: v1/v2 chose `0`; the same evidence sentence also had `$4.7 million of letters of credit outstanding`. | Need a no-gold rule to catch suspicious zero selection. | Add v3 no-gold verifier/retry. |
+| v3 result | v3 scored `1275/1827 (69.8%)`, `+2.4 pts` over v2 and `+2.8 pts` over v1. | Verification retry gives a meaningful gain. | Treat v3 as the strongest current implemented version. |
+| v3 remaining errors | v3 had `552` wrong turns; program-question wrong turns were `434/552 (78.6%)`. | Remaining errors are mostly reasoning/program errors, not simple lookup. | Consider future retrieval examples or stronger checking. |
+| v3 -> v4 motivation | Rough v4-target reasoning-pattern candidates: `226/552 (40.9%)` of v3 wrong turns. | Similar examples may help operation patterns, but not guaranteed. | Implement v4 as an experiment: v3 + train-example retrieval. |
+
+### Within-Version Tuning Drivers
+
+| Area | Observed issue | Example / statistic | Tweak made |
+| --- | --- | --- | --- |
+| Evaluation standard | False negatives from percent display. | `Double_C/2008/page_217.pdf`, Turn 3: `5.3%` / `5.4%` should match executed `0.05346`. | Parser normalizes `%` to ratio scale and supports tolerance. |
+| Evaluation standard | `conv_answers` could conflict with paper-style scoring. | We decided strict gold should be `executed_answers`, not display `conv_answers`. | Evaluation uses strict executed-answer gold. |
+| Batch running | API rate limit caused runs to stop and risk losing work. | 429 RPD/TPM errors during 500-case runs. | Added checkpoint append per completed turn, selected-record sidecar, progress display, and `--resume`. |
+| Parallel running | Needed faster 500-case runs. | 4 workers was faster but increased rate-limit risk. | Added `--workers`; kept evaluation compatible and resumable. |
+| v2 evidence | Evidence selection helped a true wrong-evidence case. | `Double_C`, Turn 0: v1 wrong `0.26`; v2 correct `0.309`. | Kept evidence selection as v2/v3/v4 base. |
+| v2 evidence | Evidence can still mislead or fail. | `Double_ETR`: v2 still chose `0` and propagated it. | Did not rely on evidence alone; added verifier in v3. |
+| v3 verifier | Dirty final answer caused wrong parse. | `Double_ETR`, Turn 1: model mentioned `$150 million`, but parser grabbed another number/date. | Added clean `Final answer:` retry rule. |
+| v3 verifier | Zero selection trap. | `cash borrowings = 0` vs `letters of credit outstanding = 4.7`. | Added generic zero-candidate retry rule. |
+| v3 verifier | Model sometimes omitted the competing value from `Values:`. | v4 run showed `Values: cash borrowings = 0` only, while selected evidence had `4.7`. | Made zero-selection verifier inspect selected evidence too. |
+| v3 verifier | Percent rounding caused unnecessary retry. | `3.1%` vs calculation `3.1333%`. | Relaxed percent-specific calculation tolerance. |
+| v4 retrieval | Retrieved examples were invisible. | Could not tell which examples v4 used. | Added `--show-examples`. |
+| v4 retrieval | Train-sample leakage risk. | Random42 train evaluation could retrieve examples from the same 500 selected records. | Exclude selected train evaluation records/pages from v4 retrieval pool. |
+| v4 retrieval | `Single` / `Double` same-page leakage. | `Double_X/page.pdf` could retrieve `Single_X/page.pdf-*`. | Added same underlying PDF page exclusion. |
+| v4 retrieval | Multiple examples can conflict. | Top 3 examples may imply different operations. | Added prompt rule: examples are ranked; if they conflict, follow the higher-ranked example. |
+| v4 retrieval | Full vector RAG may be overkill. | Dataset size: median formatted record `705` words, p99 `1551`, max `2362`. | Kept retrieval lightweight; no vector DB. |
+| Conversation history | Full `Target/Values/Operation/Final answer/Calculation` blocks are noisy when fed back into later turns. | Feedback noted that verbose reasoning history can confuse follow-up references. | Store only compact `Final answer: <value>` in conversation history while preserving raw predictions in output JSONL. |
+
+### Most Important Concrete Examples
+
+| Example | What happened | What it changed |
+| --- | --- | --- |
+| `Double_C/2008/page_217.pdf`, Turn 0 | v1 was wrong; v2/v3 were correct. | Justified evidence selection. |
+| `Double_ETR/2016/page_424.pdf`, Turn 0 | v1/v2 answered `0`; v3/v4 answered `4.7`. | Justified zero-selection verification. |
+| `Double_ETR`, Turn 1 | v1/v2 mentioned `150` but parsed wrong; v3/v4 produced clean `150`. | Justified clean final-answer retry. |
+| `Double_ETR`, Turn 2 | v2 propagated `0`; v3/v4 used `4.7 / 150 = 3.1%`. | Showed verifier can prevent propagation. |
+| `Single_ABMD/2006/page_62.pdf-1` | v1/v2/v3 still failed direction/reference turns. | Shows current verifier is not enough; motivates future checker/reasoning work. |
+| `Double_ADBE/2011/page_83.pdf` | Gold executable answer was `no`, while model answered numeric `10`. | Dataset/task-format ambiguity; do not overfit. |
+
+Overall development logic:
+
+```text
+v1 showed baseline capability and failure types.
+v2 targeted wrong evidence / number selection.
+v3 targeted suspicious answer reasoning and formatting.
+v4 explored retrieval-guided reasoning patterns, with leakage controls.
+Future v5 should likely be v3 + stronger deterministic checker, because v4 is still experimental.
+```
+
+## Current Coverage Of Hard Error Types
+
+| Problem | v1 | v2 | v3 | v4 |
+| --- | --- | --- | --- | --- |
+| Wrong evidence | No | Partly | Partly | Partly |
+| Wrong value selection | No | Partly | Better than v2 | Better overall on dev, though some lookup cases regress. |
+| Wrong operation direction | No | No | Slightly / limited | Helps some program-question patterns, but not a full solution. |
+| Ambiguous follow-up references | Basic history only | Basic history + evidence | Better if verifier catches propagation | Helps overall accuracy, but deeper hybrid turns remain hard. |
+| Dataset annotation mismatch | No | No | No | No |
+
+More detail:
+
+| Problem | Current best handling | Example |
+| --- | --- | --- |
+| Wrong evidence | v2/v3 evidence selection can help when it surfaces the right row/snippet. | `Double_C/2008/page_217.pdf`, Turn 0: v1 wrong, v2/v3 correct. |
+| Wrong value selection | v3 helps when the wrong value is locally suspicious, such as zero vs non-zero candidate. | `Double_ETR/2016/page_424.pdf`, Turn 0: v1/v2 `0`, v3/v4 `4.7`. |
+| Wrong operation direction | Mostly unsolved. v3 can catch contradiction between stated operation and final answer, but not if the operation itself is wrong. | `Single_ABMD/2006/page_62.pdf-1`: v1/v2/v3 still wrong. |
+| Ambiguous follow-up references | Partly handled by conversation history and compact final-answer history. v3 helps if bad reference leads to suspicious output. | `Double_ETR`, Turn 2 improved after Turn 0 was fixed. |
+| Dataset annotation mismatch | Not solved; should be documented as a limitation rather than overfit. | `Double_ADBE/2011/page_83.pdf`, gold `no`, model answers `10`. |
+
+Summary:
+
+```text
+v2/v3 improve evidence and value selection.
+v3 improves some follow-up propagation issues.
+v4 helps overall on dev, especially program questions, but it still does not fully solve operation direction or deeper conversational dependencies.
+Wrong operation direction and dataset annotation mismatch remain largely unsolved.
+```
+
 ## V1 / V2 / V3 Representative Error Examples
 
 These are the same representative examples used during failure analysis.
@@ -1626,4 +2259,42 @@ v3 fixes the Double_ETR failures that motivated the no-gold verification retry.
 v3 keeps the Double_C evidence-selection win from v2.
 v3 does not solve every calculation/reference ambiguity, especially Single_ABMD.
 v3 also does not solve annotation-style mismatch cases like Double_ADBE.
+```
+
+## Pain Points And Version Coverage
+
+| Pain point | What goes wrong | Addressed by | How it is resolved |
+| --- | --- | --- | --- |
+| Full document has too many competing numbers | Model picks the wrong row, sentence, or value from the record. | `v2` | Adds record-local evidence selection to highlight relevant text sentences, table rows, and number-centered snippets before answering. |
+| Follow-up questions depend on previous turns | Questions like "that amount" or "during that period" need conversation context. | `v1` | Keeps prior user questions and assistant answers in the chat history. |
+| Wrong value selected from same sentence | Example: choosing `cash borrowings = 0` instead of `letters of credit outstanding = 4.7`. | `v3` | Verification detects suspicious zero-selection when non-zero alternatives are present and retries. |
+| Missing or messy `Final answer:` line | Parser may grab dates, units, or unrelated numbers like `2021` or `50%`. | `v3` | Verification retries if the final answer is missing, has extra words, or contains multiple numbers. |
+| Model refuses despite answer being in record | Says "not enough information" even when evidence has numeric candidates. | `v3` | No-gold verifier retries refusal-style answers when selected evidence contains answer candidates. |
+| Percentage / ratio scale mismatch | Model outputs `3.1%` vs executable answer `0.031`, or mixes percent-point and ratio scale. | `v3`, improved by `v5` | `v3` checks suspicious percent formatting; `v5` asks for executable numeric plans so code can output ratio-scale answers. |
+| Wrong denominator in portion questions | Model computes `total / part` instead of `part / total`. | `v3`, improved by `v5` | `v3` retries denominator-direction issues; `v5` executes a structured `divide(part, total)` plan if the model emits the right plan. |
+| Arithmetic mistakes | Model finds the right values but calculates incorrectly. | `v3`, mainly `v5` | `v3` detects mismatches between operation and final answer; `v5` executes the calculation locally instead of trusting model arithmetic. |
+| Operation direction errors | Example: computes `167 - 245 = -78` instead of `245 - 167 = 78`. | Partially `v3`, potentially `v5` | `v3` can catch operation/final-answer inconsistency, but if the operation itself is wrong, v5 still depends on the model choosing the right direction. |
+| Reasoning-pattern uncertainty | Model struggles to infer whether a question asks for difference, ratio, percent change, etc. | `v4` | Retrieves similar solved train examples as reasoning-pattern hints, without using their numbers as evidence. |
+| Later-turn error propagation | Early wrong answers affect later follow-ups. | Partially `v3` / `v4` / `v5` | Cleaner final answers, retries, examples, and deterministic execution reduce but do not fully eliminate propagation. |
+| Need reproducible evaluation | Model calls are expensive and parser changes should not require rerunning everything. | Evaluation pipeline, not one version | Separates `run -> evaluate -> analyze-results`, saving raw predictions first and scoring later. |
+| Need paper-style analysis | Single headline accuracy hides where the system succeeds or fails. | Evaluation pipeline | Produces breakdowns by number-selection/program questions, simple/hybrid conversations, and turn index. |
+
+## Table Format Handling
+
+The current solution does not build a full table parser or spreadsheet-style table engine. It treats the table content already present in each ConvFinQA record as structured text, then uses row-level evidence selection and evidence-linked value extraction.
+
+| Stage | How tables are handled |
+| --- | --- |
+| Record formatting | The prompt includes the record text and table content supplied by the dataset. |
+| Evidence selection | Table rows become selectable snippets with IDs such as `T-31`, so the answerer can focus on relevant rows instead of the whole record. |
+| Number-centered snippets | Numeric values are surfaced with nearby labels/context, which helps when an answer depends on one table cell or row. |
+| v3 verification | Suspicious outputs can trigger retry, including zero-vs-nonzero mistakes, missing final answers, messy numeric answers, and ratio/percent scale issues. |
+| v5 calculation plan | Extracted values are named and linked back to evidence IDs, then arithmetic is executed in code instead of trusting free-text arithmetic. |
+
+Summary:
+
+```text
+The solution handles tables through row-level evidence selection and evidence-linked value extraction, not through full table reconstruction.
+This is a reasonable scope choice because ConvFinQA records already provide table text in a usable form.
+The limitation is that the LLM still has to understand row/column alignment. If a value is ambiguous across columns, or if the correct answer requires careful joining of row labels and column headers, the system can still pick the wrong table cell.
 ```
