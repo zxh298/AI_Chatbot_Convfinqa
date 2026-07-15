@@ -2,7 +2,7 @@
 
 ## Get started
 ### Prerequisites
-- Python 3.12+
+- Python 3.13.13
 - [UV environment manager](https://docs.astral.sh/uv/getting-started/installation/)
 
 ### Setup
@@ -20,17 +20,12 @@ uv sync
 uv add <package_name>
 ```
 
-3. Create a local `.env` file for the OpenAI API key:
+3. Create a local `.env` file in the root directory with:
 
-```bash
-cp .env.example .env  # if .env.example exists
+``` 
+OPENAI_API_KEY=your_api_key_here
 ```
 
-Or create it manually:
-
-```bash
-echo "OPENAI_API_KEY=your_api_key_here" > .env
-```
 
 Do not commit `.env`, because it contains local secrets.
 
