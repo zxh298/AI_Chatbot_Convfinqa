@@ -394,7 +394,7 @@ Lastly, in a real-world setting, an agent-based architecture could become useful
 
 # AI Usage Declaration
 
-AI tools were used during this work as an implementation assistant. Codex [3] was used to help to draft and edit Python modules, generate unit tests, run evaluation commands, format Markdown tables, and summarize experimental results. The methodology, version design, interpretation of results, project scope, and final submitted report were directed and created by the author.
+AI tools were used during this work as an implementation assistant. Codex [3] was used to help to draft and edit Python modules, generate unit tests, run evaluation commands, format Markdown tables, create README file, and summarize experimental results. The methodology, version design, interpretation of results, project scope, and final submitted report were directed and created by the author.
 
 # Reference
 [1] Chen, Zhiyu, Shiyang Li, Charese Smiley, Zhiqiang Ma, Sameena Shah, and William Yang Wang. "Convfinqa: Exploring the chain of numerical reasoning in conversational finance question answering." In Proceedings of the 2022 conference on empirical methods in natural language processing, pp. 6279-6292. 2022.
