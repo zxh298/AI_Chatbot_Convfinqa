@@ -404,8 +404,6 @@ AI tools were used during this work as an implementation assistant. Codex [3] wa
 [3] OpenAI. (n.d.). Codex in ChatGPT. https://openai.com/codex/
 
 <br>
-<br>
-<br>
 
 # Appendix
 ## 1. Prompt Evolution
