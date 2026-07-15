@@ -518,6 +518,8 @@ Gold executed answer: 0.61379
 ```
 In this example, `v4` used 4051/6.6 = 613.79 as the final answer, which has the denominator in a wrong scale, i.e., the 6.6 means $6.6 billion, but 4051 is in million. In contrast, `v5` used a structured calculation plan which stored the two numbers in the same scale, which helped the model get the correct answer 4051/6600 = 0.61379.
 
+The solution does not rely on verbose COT(chain-of-thought) prompting; instead, it asks for a compact `Target / Values / Operation` check and, in `v5`, a structured calculation plan. This keeps the reasoning inspectable without depending on long free-form reasoning text.
+
 `v5` plan structure:
 
 ```json
