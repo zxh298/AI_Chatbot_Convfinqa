@@ -1,14 +1,5 @@
 # ConvFinQA Assignment
 
-
-Thank you for taking the time to do this assignment! Please see the [main Notion page](https://tomoroai.notion.site/Technical-Assignment-1fa0de3387ea80debb36cda4ae41e93d) for the full instructions. 
-
-
-We have cleaned up the dataset; please see `dataset.md` for more information. We recommend you use this version of the data for the assignment, as it will save you a lot of time. If you have any questions, please don't hesitate to ask your point of contact. 
-
-
-Good luck! 
-
 ## Get started
 ### Prerequisites
 - Python 3.12+
@@ -28,6 +19,20 @@ uv sync
 # add python package to env
 uv add <package_name>
 ```
+
+3. Create a local `.env` file for the OpenAI API key:
+
+```bash
+cp .env.example .env  # if .env.example exists
+```
+
+Or create it manually:
+
+```bash
+echo "OPENAI_API_KEY=your_api_key_here" > .env
+```
+
+Do not commit `.env`, because it contains local secrets.
 
 ### Run the ConvFinQA CLI
 
@@ -49,33 +54,28 @@ Before calling the OpenAI API, set `OPENAI_API_KEY` in your environment or `.env
 
 #### Chat with one record
 
+Run the baseline full-record version:
+
 ```bash
 uv run main chat Single_PNC/2015/page_48.pdf-1 --version v1
 ```
 
-This loads the selected ConvFinQA record, sends its `pre_text`, table, `post_text`, and conversation history to the model, and lets you ask follow-up questions interactively.
+Available answer versions:
 
-To enable the record-local evidence-selection version, set `--version v2`:
+- `v1`: full-record baseline
+- `v2`: record-local evidence selection
+- `v3`: evidence selection + no-gold verification retry
+- `v4`: v3 + retrieved train-example reasoning guidance
+- `v5`: v3 + structured calculation-plan execution
+- `v5a`: v5 + limited offline numeric fallback
 
-```bash
-uv run main chat Single_PNC/2015/page_48.pdf-1 --version v2
-```
-
-To inspect which snippets were selected on each turn, add `--show-evidence`:
+For versions that use evidence selection (except for `v1`), add `--show-evidence` to inspect selected snippets:
 
 ```bash
 uv run main chat Single_PNC/2015/page_48.pdf-1 --version v2 --show-evidence
 ```
 
-To run the evidence-selection version with one lightweight verification retry, use `--version v3`:
-
-```bash
-uv run main chat Single_PNC/2015/page_48.pdf-1 --version v3 --show-evidence
-```
-
-[![Chat](figures/chat_example.png)](figures/chat.png)  
-
-#### Run the model
+#### Run the model in batch
 
 ```bash
 uv run main run \
@@ -84,63 +84,47 @@ uv run main run \
   --max-records 500 \
   --random-seed 42 \
   --version v1 \
-  --output-path outputs/run_train_500_random42_full_gpt4o_mini.jsonl
+  --workers 2 \
+  --output-path outputs/run_train_500_random42_gpt4o_mini_v1.jsonl
 ```
+and on dev data:
+```bash
+uv run main run \
+  --split dev \
+  --model gpt-4o-mini \
+  --version v1 \
+  --workers 2 \
+  --output-path outputs/run_dev_gpt4o_mini_v1.jsonl
+```
+
+Parameters:
+
+- `--split train`: choose which dataset split to run (`train` or `dev`).
+- `--model gpt-4o-mini`: choose the OpenAI model used for answer generation.
+- `--max-records 500`: limit the run to 500 records from the input data; omit this to run the full split.
+- `--random-seed 42`: sample records reproducibly when `--max-records` is used.
+- `--version v1`: select the answer pipeline version (`v1`, `v2`, `v3`, `v4`, `v5`, or `v5a`).
+- `--workers 2`: run multiple records concurrently using 2 workders; turns inside each record still run sequentially.
+- `--output-path ...jsonl`: save raw model predictions to a JSONL file.
 
 This replays dataset `conv_questions` and writes one raw JSONL row per model answer. The run file stores predictions only; it does not store gold answers or correctness.
 
-To run the evidence-selection version, set `--version v2` and write to a separate output file:
-
-```bash
-uv run main run \
-  --split train \
-  --model gpt-4o-mini \
-  --max-records 500 \
-  --random-seed 42 \
-  --version v2 \
-  --output-path outputs/run_train_500_random42_full_gpt4o_mini_evidence.jsonl
-```
-
-To run evidence selection plus no-gold verification retry, set `--version v3`:
-
-```bash
-uv run main run \
-  --split train \
-  --model gpt-4o-mini \
-  --max-records 500 \
-  --random-seed 42 \
-  --version v3 \
-  --output-path outputs/run_train_500_random42_gpt4o_mini_v3.jsonl
-```
-
 #### Evaluate saved predictions
-
-```bash
-uv run main evaluate \
-  outputs/run_train_500_random42_full_gpt4o_mini.jsonl \
-  --output-path outputs/eval_train_500_random42_full_gpt4o_mini_strict_executed.jsonl
-```
 
 This compares saved predictions against strict `executed_answers`, prints Table 4 / Figure 5-style breakdowns, and optionally writes a scored JSONL file.
 
-#### Analyze saved results
-
 ```bash
-uv run main analyze-results outputs/eval_train_500_random42_full_gpt4o_mini_strict_executed.jsonl
+uv run main evaluate \
+  outputs/run_train_500_random42_gpt4o_mini_v1.jsonl \
+  --output-path outputs/eval_train_500_random42_full_gpt4o_mini_strict_executed.jsonl
 ```
 
-This reads an already-scored JSONL file and prints Table 4 / Figure 5-style breakdowns without making additional API calls.
+on dev data:
+```bash
+uv run main evaluate \
+  outputs/run_dev_gpt4o_mini_v1.jsonl \
+  --output-path outputs/eval_dev_gpt4o_mini_v1_strict_executed.jsonl
+```
 
-## Submission 
-Please make a submission branch & make a PR to main. The PR should contain: 
-
-
-- A solution to the main task
-- A report summarising your findings. We have sketched out a template for you in `REPORT.md`, but you can use any other setup (like LaTeX) if you prefer.
-- Please send a link to the PR to [recruitment@tomoro.ai](mailto:recruitment@tomoro.ai) with the subject `submission: <your name>`.
-  
-NOTE: Please DO NOT merge any of your submission to main, all of your work should be on your branch `submission`. 
-
-
-**Please let us know if you used any AI tools to help generate code for your assignment.**
-Using AI-powered IDEs or coding assistants is acceptable, as these are commonly used in real-world environments, and this assignment is intended to reflect that. If you’ve used AI tools to help you write code or your report, or any other part of your process, we ask that you disclose how and where you used them. This isn’t to catch you out. It’s an opportunity to show that you understand how to use these tools effectively and responsibly as part of your workflow.
+#### AI usage in this work
+AI tools were used during this work as an implementation assistant. Codex was used to help to draft and edit Python modules, generate unit tests, run evaluation commands, format Markdown tables, create README file, and summarize experimental results. The methodology, version design, interpretation of results, project scope, and final submitted report were directed and created by the author.
