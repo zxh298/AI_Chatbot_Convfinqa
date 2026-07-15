@@ -1,10 +1,10 @@
 # ConvFinQA Report
-## 1. Introduction
+# Introduction
 This project aims to build a prototype for answers conversational dialogue questions over the ConvFinQA dataset. This reports shows a natural development envolvement on this task using modern LLM (Large Language Model) advancements since the paper release. All the code and documentation are submitted along with this report, to help on reproducing the results as well as any further discussion.
 
 The final implementation is a Typer CLI with interactive chat tool, data exploration, methodology, result analysis and future work. Detailed explaination and the choice of methods are presented in the following sections, and a discussion of strengths, limitations and future work are also shown in this report.
 
-## 2. Data exploration
+# Data Exploration
 The provided dataset file (data/convfinqa_dataset.json) contains 3037 "train" and 421 "dev" samples, which contains conversational numerical reasoning questions over unstructured financial documents, containing datatables. It is a cleaner version of the data described in the ConvFinQA paper [1]. The data has Type I (Simple) and Type II (Hybrid) conversations and a pre-extracted structured text table that contains table rows with cell values already linearised from the source filling, so the system can read table content directly from JSON. 
 
 Table 1 shows that the data contains more multi-turn conversations rather than single questions, with most records have between two and four turns. This supports the fact that the system needs to reference previous questions and answers, and the evaluation should consider turn level performance rather than only the overall accuracy.
@@ -120,85 +120,260 @@ Our solution reads the provided ConvFinQA dataset from the given JSON file, wher
 
 In addition, a basic data leakage check was performed to understand how independent the `train` and `dev` splits are. We used LLM and tt founds that no exact same records are shared by both `train` and `dev`, but the data naturally contains repeated questions and similar reasoning patterns across different cases. Within each split, the `record_id` is unique, but there are some records were devrived from the same source PDF. As mentioned in the paper [1], this is expected in ConvFinQA because different conversations may come from the same financial page.
 
-## 3. Methodology
-### Scope and Evaluation Choices
+# Methodology
+
+## Method Boundaries And Scoring Design
 Learned from the data and the scope of the task, full corpus-level RAG (Retrieval-Augmented Generation) is not used in our solution. The assignment data already provides the relevant `record_id` for each conversation and the central challenge is not retrieving the correct financial, but giving correct answer within the selected record. Using a full RAG pipeline with document indexing, chunk retrieval, vector search and re-ranking would add engineering complexity without providing direct benefit on solve the main challenges (shown as in Table 3) presented in this assignment.   
 
-The evaluation focuses on `executed_answers` rather than `turn_program` because the goal of this prototype is to anwer the financial question correctly, rather than to reproduce the exact ConvFinQA program annotation. In addtion, `turn_program` only represents one possible reasoning program, different valid reasoning paths can also produce the same final answer, especially using a LLM-based system. So we use `executed_answers` for strict scoring, and the solution generates information similar to `turn_program` which is used to make the reasoning inspectable and to execute the final arithmetic deterministically. 
+The evaluation focuses on `executed_answers` rather than `turn_program` because the goal of this prototype is to anwer the financial question correctly, rather than to reproduce the exact ConvFinQA program annotation. In addtion, `turn_program` only represents one possible reasoning program, different valid reasoning paths can also produce the same final answer, especially using a LLM-based system. So we use `executed_answers` for strict scoring, and the solution generates information similar to `turn_program` which is used to make the reasoning inspectable and to execute the final arithmetic deterministically. The solution also has a numeric comparision function that considers decimal tolerance. This is an important function because 0.2085, 0.209 and 20.9% are actually same thing.
 
-A fixed 500-record sample from the train data was used for development because full-train evaluation for testing every version would require significantly more LLM API calls, cost and runtime. The sample was selected using a fixed randome seed for reproducibility and was large enough to expose the main failure cases. The final evaluation is reported using the full dev data, which is kept separate for the main held-out comparision.
+A fixed 500 record sample from the train data was used for development (by hiding the gold information and let the model work out the final answer). Because testing on full-train data for multiple solution versions requires significantly more LLM API calls, cost and runtime. The sample was selected using a fixed randome seed for reproducibility and was large enough to expose the main failure cases. The final evaluation is reported using the full dev data, which is kept separate for the main held-out comparision.
 
-The solution is also integrated into the interactive chat tool. This means different versions can also be used and tested via the chat tool, rather than only through batch evaluation. Users can provide a `record_id` and the version number to see the actual answer to the question. It is useful to inspect the solution, especially the later version which fixes a verification or calulation issues that presented in the earlier versions.
+The solution is also integrated into the interactive chat tool (see README.md for more details). This means different versions can also be used and tested via the chat tool, rather than only through batch evaluation. Users can provide a `record_id` and the version number to see the actual answer to the question. It is useful to inspect the solution, especially the later version which fixes a verification or calulation issues that presented in the earlier versions.
 
-### Iterative Solution Evolution
+## Iterative Solution Evolution
 A single large design would make it unclear of which component or funtion was responsible for any regression of improvement. In this work, the solution was developed through controlled iterations, where each version adds one main capability which can be compared directly with the previous version. This makes the development process transparent, easier to show the thinking process behind the implementation, fits the scope of this task and better than a single all-in-one version. 
 
-The first version `v1` uses the selected `record_id` and formats the entire record context, which includes the `pre_text`, `post_text`, the table content, conversation hitory and current question. The system then passes this context to the model with the conversation history. This `v1` provides a reference point that later version could add corresponding function that target the wrong evidence selection, incorrect value selection, arithmetic mistakes, messy final answers and multi-tun error propagation. 
+The first version `v1` uses the selected `record_id` and formats the entire record context, which includes the `pre_text`, `post_text`, the table content, conversation hitory and current question. The system then passes this context to the model with the conversation history. This `v1` provides a reference point that later version could add corresponding function that target the wrong evidence selection, incorrect value selection, arithmetic mistakes, messy final answers and multi-tun error propagation. The Table 4 show the results of running `v1` using the train sample. The challenges shown in the paper [1] can be grouped into a smaller set of observed error types (a LLM-assisted error analysis) which made the development priority clearer:
 
-```text
-Record ID: Single_JKHY/2009/page_28.pdf-3
+<table>
+  <thead>
+    <tr align="center">
+      <th>Error type</th>
+      <th>Count</th>
+      <th>Related modeling challenges (shown in Table 3)</th>
+      <th>Development direction</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Calculation / program errors</td>
+      <td>309</td>
+      <td>Choosing the correct operation, sign, denominator; avoiding arithmetic mistakes; inferring reasoning pattern</td>
+      <td>Add verification, reasoning-pattern guidance, and later structured execution</td>
+    </tr>
+    <tr>
+      <td>Ratio or percentage errors</td>
+      <td>231</td>
+      <td>Handling ratio/percentage scale; choosing denominator; preventing arithmetic/format mismatch</td>
+      <td>Add percent/ratio normalization and denominator checks</td>
+    </tr>
+    <tr>
+      <td>Number-selection errors</td>
+      <td>110</td>
+      <td>Competing numeric candidates; grounding to the correct evidence/table row; selecting the correct nearby value</td>
+      <td>Add record-local evidence selection</td>
+    </tr>
+    <tr>
+      <td>Non-numeric / refusal errors</td>
+      <td>65</td>
+      <td>Producing clean parseable answers; avoiding unsupported refusals when numeric evidence exists</td>
+      <td>Add no-gold retry rules for refusal and final-answer format</td>
+    </tr>
+    <tr>
+      <td>Other / annotation ambiguity</td>
+      <td>2</td>
+      <td>Dataset/task-format mismatch</td>
+      <td>Document as limitation rather than overfit</td>
+    </tr>
+  </tbody>
+</table>
 
-Pre-table text: ...
+<div align="center">
+<p><strong>Table 4. Key modeling challenges and error type mapping.</strong></p>
+</div>
 
-Table:
-| metric | 2009 | 2008 | 2007 |
-|---|---:|---:|---:|
-| net cash from operating activities | 206588 | 181001 | 174247 |
+<br>
 
-Post-table text: ...
+This analysis suggests two things: First, the largest source of error was Calculation / program errors , not only document retrieval. Second, grounding still had to come first because calculation cannot be correct if the wrong row or value is selected. Therefore the development order starts with a baseline, adds evidence grounding, verification/retry, then add reasoning-pattern retrieval, finally the deterministic execution of structured plans. Please see Section "1. Prompt Evolution" and "2. Version Comparision With Example" in Appedix for more details of implementation evolution between different versions. Table 5 shows the exact definition of each version, along with the corresponding main targets. One assumption here is the LLM-generated values and operations are mostly reasonable, for example, the evidence reranking and calculation plan generation etc.  
 
-Conversation history:
-(none)
+<table>
+  <thead>
+    <tr align="center">
+      <th>Version</th>
+      <th>Main idea</th>
+      <th>Error target</th>
+      <th>Why it was introduced</th>
+      <th>LLM role</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>v1</code></td>
+      <td>Full-record baseline</td>
+      <td>Baseline capability</td>
+      <td>Whether a modern LLM can answer from the full selected record plus conversation history.</td>
+      <td>Reads the full selected record, resolves the current turn, and produces the final answer.</td>
+    </tr>
+    <tr>
+      <td><code>v2</code></td>
+      <td>Record-local evidence selection</td>
+      <td>Number-selection errors</td>
+      <td>v2 highlights relevant text/table snippets before answering.</td>
+      <td>Reranks candidate snippets, then uses focused evidence plus the full record to answer questions.</td>
+    </tr>
+    <tr>
+      <td><code>v3</code></td>
+      <td>Evidence selection + verification retry</td>
+      <td>Non-numeric/refusal errors; ratio or percentage errors; simple calculation/program errors</td>
+      <td>v3 does a retry when local consistency checks detects likely failure.</td>
+      <td>Produces an initial answer, then revises once if the verifier flags a local inconsistency.</td>
+    </tr>
+    <tr>
+      <td><code>v4</code></td>
+      <td>v3 + few-shot reasoning retrieval</td>
+      <td>Calculation/program errors, especially reasoning-pattern uncertainty</td>
+      <td>v4 retrieves similar solved train examples as operation-pattern hints, without using their numbers as evidence.</td>
+      <td>Uses similar solved examples as reasoning-pattern hints to anwswer the question given current value.</td>
+    </tr>
+    <tr>
+      <td><code>v5</code></td>
+      <td>v3 + structured calculation-plan execution</td>
+      <td>Calculation/program errors and ratio or percentage errors</td>
+      <td>v4 improved accuracy but added example noise and retrieval complexity. v5 uses an auditable plan and execute the arithmetic locally.</td>
+      <td>Extracts named values and proposes a calculation plan and uses local code executes the arithmetic.</td>
+    </tr>
+  </tbody>
+</table>
+<div align="center">
+<p><strong>Table 5. Solution evolution plan and the role of LLM.</strong></p>
+</div>
 
-Current question:
-What was the net cash from operating activities in 2009?
+<br>
+
+As Table 6 shows, the general accuracy in each breakdown metric (same as the metrics being used in the paper [1]) shows a positive growth trend from `v1` to `v5`. The overall accuracy rises from 66.9% to around 72%, meaning a clear benefit gain on program questions and later coversation turns.
+
+<div align="center">
+<table>
+  <thead>
+    <tr align="center">
+      <th>Breakdown</th>
+      <th>v1</th>
+      <th>v2</th>
+      <th>v3</th>
+      <th>v4</th>
+      <th>v5</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>Full results</td><td>1223/1827 (66.9%)</td><td>1231/1827 (67.4%)</td><td>1275/1827 (69.8%)</td><td>1323/1827 (72.4%)</td><td>1316/1827 (72.0%)</td></tr>
+    <tr><td>Number selection questions</td><td>505/640 (78.9%)</td><td>514/640 (80.3%)</td><td>522/640 (81.6%)</td><td>537/640 (83.9%)</td><td>514/640 (80.3%)</td></tr>
+    <tr><td>Program questions</td><td>718/1187 (60.5%)</td><td>717/1187 (60.4%)</td><td>753/1187 (63.4%)</td><td>786/1187 (66.2%)</td><td>802/1187 (67.6%)</td></tr>
+    <tr><td>Simple conversations</td><td>782/1163 (67.2%)</td><td>798/1163 (68.6%)</td><td>819/1163 (70.4%)</td><td>862/1163 (74.1%)</td><td>858/1163 (73.8%)</td></tr>
+    <tr><td>Hybrid conversations</td><td>441/664 (66.4%)</td><td>433/664 (65.2%)</td><td>456/664 (68.7%)</td><td>461/664 (69.4%)</td><td>458/664 (69.0%)</td></tr>
+    <tr><td>Hybrid first part</td><td>258/363 (71.1%)</td><td>248/363 (68.3%)</td><td>271/363 (74.7%)</td><td>280/363 (77.1%)</td><td>271/363 (74.7%)</td></tr>
+    <tr><td>Hybrid second part</td><td>183/301 (60.8%)</td><td>185/301 (61.5%)</td><td>185/301 (61.5%)</td><td>181/301 (60.1%)</td><td>187/301 (62.1%)</td></tr>
+    <tr><td>Turn 0</td><td>385/500 (77.0%)</td><td>389/500 (77.8%)</td><td>392/500 (78.4%)</td><td>403/500 (80.6%)</td><td>390/500 (78.0%)</td></tr>
+    <tr><td>Turn 1</td><td>349/500 (69.8%)</td><td>348/500 (69.6%)</td><td>358/500 (71.6%)</td><td>377/500 (75.4%)</td><td>374/500 (74.8%)</td></tr>
+    <tr><td>Turn 2</td><td>238/376 (63.3%)</td><td>240/376 (63.8%)</td><td>250/376 (66.5%)</td><td>261/376 (69.4%)</td><td>263/376 (69.9%)</td></tr>
+    <tr><td>Turn 3</td><td>153/266 (57.5%)</td><td>146/266 (54.9%)</td><td>165/266 (62.0%)</td><td>174/266 (65.4%)</td><td>178/266 (66.9%)</td></tr>
+    <tr><td>Turn 4</td><td>67/132 (50.8%)</td><td>70/132 (53.0%)</td><td>76/132 (57.6%)</td><td>73/132 (55.3%)</td><td>78/132 (59.1%)</td></tr>
+    <tr><td>Turn 5</td><td>20/36 (55.6%)</td><td>25/36 (69.4%)</td><td>23/36 (63.9%)</td><td>24/36 (66.7%)</td><td>21/36 (58.3%)</td></tr>
+    <tr><td>Turn 6</td><td>8/12 (66.7%)</td><td>9/12 (75.0%)</td><td>8/12 (66.7%)</td><td>8/12 (66.7%)</td><td>8/12 (66.7%)</td></tr>
+    <tr><td>Turn 7</td><td>3/4 (75.0%)</td><td>4/4 (100.0%)</td><td>3/4 (75.0%)</td><td>3/4 (75.0%)</td><td>4/4 (100.0%)</td></tr>
+    <tr><td>Turn 8</td><td>0/1 (0.0%)</td><td>0/1 (0.0%)</td><td>0/1 (0.0%)</td><td>0/1 (0.0%)</td><td>0/1 (0.0%)</td></tr>
+  </tbody>
+</table>
+
+<p><strong>Table 6. Train sample accuracy breakdown across solution versions.</strong></p>
+</div>
+
+<br>
+
+One interesting case (shown as in Table 7) is the only "Turn 8" question (Record ID: Double_AMT/2012/page_121.pdf) presents in the train data sample. No version answered all questions correctly because the turn depends on long multi-tun state, ambiguous wordings (e.g., "represent in relation to") as well as ratio-scale handling. This case is a good example that highlights the remaining limitations of the text-based conversation history and prompts, and motivates a structured state based memory, as for future work.
+
+<div align="center">
+<table>
+  <thead>
+    <tr align="center">
+      <th>Turn</th>
+      <th>Question focus</th>
+      <th>Gold</th>
+      <th>v1</th>
+      <th>v2</th>
+      <th>v3</th>
+      <th>v4</th>
+      <th>v5</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>0</td><td>total acquired customer-related and network location intangibles</td><td>147.7</td><td>Wrong</td><td>Correct</td><td>Correct</td><td>Correct</td><td>Correct</td></tr>
+    <tr><td>1</td><td>expected amortization period</td><td>20.0</td><td>Correct</td><td>Correct</td><td>Correct</td><td>Correct</td><td>Correct</td></tr>
+    <tr><td>2</td><td>expected annual amortization expenses</td><td>7.385</td><td>Wrong</td><td>Correct</td><td>Correct</td><td>Correct</td><td>Correct</td></tr>
+    <tr><td>3</td><td>value of current assets</td><td>11095.0</td><td>Wrong</td><td>Wrong</td><td>Wrong</td><td>Wrong</td><td>Wrong</td></tr>
+    <tr><td>4</td><td>total sum of current assets and non-current ones</td><td>37806.0</td><td>Wrong</td><td>Wrong</td><td>Wrong</td><td>Wrong</td><td>Wrong</td></tr>
+    <tr><td>5</td><td>including property and equipment, what becomes that sum</td><td>21079.0</td><td>Wrong</td><td>Wrong</td><td>Wrong</td><td>Wrong</td><td>Wrong</td></tr>
+    <tr><td>6</td><td>including intangible assets, what becomes this total</td><td>58885.0</td><td>Wrong</td><td>Wrong</td><td>Correct</td><td>Wrong</td><td>Wrong</td></tr>
+    <tr><td>7</td><td>fair value of net assets acquired</td><td>57536.0</td><td>Wrong</td><td>Correct</td><td>Correct</td><td>Wrong</td><td>Correct</td></tr>
+    <tr><td>8</td><td>how much does that total represent in relation to this fair value</td><td>1.02345</td><td>Wrong</td><td>Wrong</td><td>Wrong</td><td>Wrong</td><td>Wrong</td></tr>
+  </tbody>
+</table>
+<p><strong>Table 7. Answers for the record with 8 turns.</strong></p>
+
+</div>
+
+## Evaluate Discussion And Solution Limitations
+
+The dev results (shown as in Table 8) follows the same general trend as the train-500 sample in Table 6. The biggest gains are on program questions and later turn cases, which require arithmetic, operation selection, and conversation context. We can see `v5` performed stronger on program questions and the second part of the hybrid conversations. This supports the value of explicit calculation plans for the multi-step reasoning cases. It does not mean reimplementing the same system as the paper, but building a lighter, more auditable JSON plan designed for this prototype. 
+
+<div align="center">
+<table>
+  <thead>
+    <tr align="center">
+      <th>Breakdown</th>
+      <th>v1</th>
+      <th>v2</th>
+      <th>v3</th>
+      <th>v4</th>
+      <th>v5</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>Full results</td><td>987/1490 (66.2%)</td><td>1022/1490 (68.6%)</td><td>1052/1490 (70.6%)</td><td>1070/1490 (71.8%)</td><td>1066/1490 (71.5%)</td></tr>
+    <tr><td>Number selection questions</td><td>377/487 (77.4%)</td><td>395/487 (81.1%)</td><td>400/487 (82.1%)</td><td>394/487 (80.9%)</td><td>378/487 (77.6%)</td></tr>
+    <tr><td>Program questions</td><td>610/1003 (60.8%)</td><td>627/1003 (62.5%)</td><td>652/1003 (65.0%)</td><td>676/1003 (67.4%)</td><td>688/1003 (68.6%)</td></tr>
+    <tr><td>Simple conversations</td><td>724/1052 (68.8%)</td><td>754/1052 (71.7%)</td><td>768/1052 (73.0%)</td><td>787/1052 (74.8%)</td><td>779/1052 (74.0%)</td></tr>
+    <tr><td>Hybrid conversations</td><td>263/438 (60.0%)</td><td>268/438 (61.2%)</td><td>284/438 (64.8%)</td><td>283/438 (64.6%)</td><td>287/438 (65.5%)</td></tr>
+    <tr><td>Hybrid first part</td><td>154/250 (61.6%)</td><td>154/250 (61.6%)</td><td>162/250 (64.8%)</td><td>159/250 (63.6%)</td><td>154/250 (61.6%)</td></tr>
+    <tr><td>Hybrid second part</td><td>109/188 (58.0%)</td><td>114/188 (60.6%)</td><td>122/188 (64.9%)</td><td>124/188 (66.0%)</td><td>133/188 (70.7%)</td></tr>
+    <tr><td>Turn 0</td><td>306/421 (72.7%)</td><td>314/421 (74.6%)</td><td>314/421 (74.6%)</td><td>322/421 (76.5%)</td><td>312/421 (74.1%)</td></tr>
+    <tr><td>Turn 1</td><td>294/421 (69.8%)</td><td>300/421 (71.3%)</td><td>309/421 (73.4%)</td><td>313/421 (74.3%)</td><td>313/421 (74.3%)</td></tr>
+    <tr><td>Turn 2</td><td>192/305 (63.0%)</td><td>196/305 (64.3%)</td><td>206/305 (67.5%)</td><td>208/305 (68.2%)</td><td>208/305 (68.2%)</td></tr>
+    <tr><td>Turn 3</td><td>127/211 (60.2%)</td><td>138/211 (65.4%)</td><td>143/211 (67.8%)</td><td>149/211 (70.6%)</td><td>151/211 (71.6%)</td></tr>
+    <tr><td>Turn 4</td><td>56/108 (51.9%)</td><td>63/108 (58.3%)</td><td>65/108 (60.2%)</td><td>63/108 (58.3%)</td><td>66/108 (61.1%)</td></tr>
+    <tr><td>Turn 5</td><td>11/20 (55.0%)</td><td>10/20 (50.0%)</td><td>13/20 (65.0%)</td><td>13/20 (65.0%)</td><td>14/20 (70.0%)</td></tr>
+    <tr><td>Turn 6</td><td>1/3 (33.3%)</td><td>1/3 (33.3%)</td><td>2/3 (66.7%)</td><td>2/3 (66.7%)</td><td>2/3 (66.7%)</td></tr>
+    <tr><td>Turn 7</td><td>0/1 (0.0%)</td><td>0/1 (0.0%)</td><td>0/1 (0.0%)</td><td>0/1 (0.0%)</td><td>0/1 (0.0%)</td></tr>
+  </tbody>
+</table>
+<p><strong>Table 8. Dev data accuracy breakdown across solution versions.</strong></p>
+</div>
+
+<br>
+
+In addition to batch evaluation on gold ConvFinQA turns, the interactive chat tool was used for qualitative smoke testing with user-defined questions (not included in the original train or dev data) over selected records. Due to time limit, only a small number of such questions were tested. The results were broadly consistent with the dev results, showing the later versions performed better. However, all the versions were struggling of answering highly vague user-defined questions, especially the question did not clearly specify the time period, target values or has long turns.
+
+The remaining limitations of this prototype work are clear. First, as mentioned in previous sections, some operations (e.g., value extraction) is still partly driven by LLM. This means if the LLM model selects the wrong value, the local execuition will compute the next answer with the wrong input. Similarly, the compute operations are also driven by LLM. Even the executor prevents arithmetic mistakes, but it cannot always know whether the intended operation should be subtraction, division, or a percentage conversion. Third, the table-cell grounding is working but not fully structured. The solution does not build a formal table graph, which could increase the chance of selecting the wrong number. Next, the multi-turn state is passed as text history rather than stored as named structured variables. This still could make the long reference chains such as "that total" can still fail. Finally, the verification is still heuristic rather than a real financial-reasoning verifier, so it only catches common failures but does not guarantee the correctness.
+
+# System Design And Tooling
+
+This prototype has an command-line driven pipeline works for both the interactive chat and batch processing. As what is shown in the highlevel architecture diagram below, it starts with the data loader, formats and constructure the prompt, runs the user selected version (`v1` to `v5`), saves the raw output to JSONL, and evaluates the answers separately against `executed_answers`. The gpt-4o-mini [2] is used as the main LLM model because of cost and runtime limitations. A parallelisation function is built for running the batch processing, while preserving sequential turn order inside each conversation. The same pipeline also connects to the interactive chat tool, and user can run the selected version to see the answer for a given question. See more details in the README.md.
+
+```mermaid
+flowchart LR
+    A[ConvFinQA JSON Dataset] --> B[Data Loading and Record Lookup]
+    B --> C[Prompt and Context Construction]
+    C --> D[Versioned Answer Pipeline]
+    D --> E[LLM Answer Generation]
+    E --> F[Verification or Local Execution]
+    F --> G[Saved Predictions JSONL]
+    G --> H[Evaluation Against executed_answers]
+    H --> I[Accuracy and Breakdown Tables]
+
+    D --> J[Interactive Chat Tool]
 ```
 
-The following tables show the results of running `v1` using the train sample. The challenges shown in the paper [1] can be grouped into a smaller set of observed error types (a LLM-assisted error analysis) which made the development priority clearer:
-
-| Error type | Count | Related modeling challenges (shown in Table 3) | Development direction |
-| --- | ---: | --- | --- |
-| Calculation / program errors | 309 | Choosing the correct operation, sign, denominator; avoiding arithmetic mistakes; inferring reasoning pattern | Add verification, reasoning-pattern guidance, and later structured execution |
-| Ratio or percentage errors | 231 | Handling ratio/percentage scale; choosing denominator; preventing arithmetic/format mismatch | Add percent/ratio normalization and denominator checks |
-| Number-selection errors | 110 | Competing numeric candidates; grounding to the correct evidence/table row; selecting the correct nearby value | Add record-local evidence selection |
-| Non-numeric / refusal errors | 65 | Producing clean parseable answers; avoiding unsupported refusals when numeric evidence exists | Add no-gold retry rules for refusal and final-answer format |
-| Other / annotation ambiguity | 2 | Dataset/task-format mismatch | Document as limitation rather than overfit |
-
-This analysis suggested two things. First, the largest source of error was Calculation / program errors , not only document retrieval. Second, grounding still had to come first because calculation cannot be correct if the wrong row or value is selected. Therefore the development order starts with a baseline, adds evidence grounding, verification/retry, then add reasoning-pattern retrieval, finally the deterministic execution of structured plans.
-
-| Version | Main idea | Error target | Why it was introduced | LLM role |
-| --- | --- | --- | --- | --- |
-| `v1` | Full-record baseline | Baseline capability | Whether a modern LLM can answer from the full selected record plus conversation history. | Reads the full selected record, resolves the current turn, and produces the final answer. |
-| `v2` | Record-local evidence selection | Number-selection errors | v2 highlights relevant text/table snippets before answering. | Reranks candidate snippets, then uses focused evidence plus the full record to answer questions. |
-| `v3` | Evidence selection + verification retry | Non-numeric/refusal errors; ratio or percentage errors; simple calculation/program errors | v3 does a retry when local consistency checks detects likely failure. | Produces an initial answer, then revises once if the verifier flags a local inconsistency. |
-| `v4` | v3 + train-example reasoning retrieval | Calculation/program errors, especially reasoning-pattern uncertainty | v4 retrieves similar solved train examples as operation-pattern hints, without using their numbers as evidence. | Uses similar solved examples as reasoning-pattern hints to anwswer the question given current value. |
-| `v5` | v3 + structured calculation-plan execution | Calculation/program errors and ratio or percentage errors | v4 improved accuracy but added example noise and retrieval complexity. v5 uses an auditable plan and execute the arithmetic locally. | Extracts named values and proposes a calculation plan and uses local code executes the arithmetic. |
-
----
-
-### Representative Version Improvements
-We have tested `v1` using our train samples, and no suprise it did not produce perfect answers. 
-
-
-
-rewrite this:
-Few shot vs COT; mention no gold information is used. 
-
-
-### Model Evaluation
-
-rewrite this:
-mention our solution vs the paper
-show table of how much failure cases have been resolve by different cases
-
-
-## 4. Engineering
-gpt-4o-mini for cost and speed efficiency, workers for parallelisation. 
-My system therefore focuses on selecting the relevant table rows and grounding extracted values to evidence IDs, rather than reconstructing table layout from the original document.
-How our solution is connected to the chat tool.
-workers.
-
-## 5. Future Work 
+# Future Work
 
 Re-write this:
 A natural future extension is to add structured conversation-state memory on top of v5. The current system passes previous turns back as compact text, such as Final answer: 4.7, which is useful but still leaves reference resolution to the LLM. Since v5 already produces named values, evidence IDs, and calculation steps, a future v6 could persist these outputs as structured state, for example drawn_amount = 4.7 from T-33 or facility_amount = 150 from T-31. Later follow-up questions such as “what percentage did that amount represent?” could then reuse these explicit variables instead of relying only on natural-language history. This would directly target one of the main remaining limitations: ambiguous multi-turn state tracking.
@@ -206,10 +381,138 @@ A natural future extension is to add structured conversation-state memory on top
 Re-write this:
 dedicate table format
 
-## Appendix
-AI usage in this report: codex
-Mentioned readme
+# Appendix
+## 1. Prompt Evolution
+All versions use the same core system prompt, which is `Target / Values / Operation` value check, and finish with `Final answer: <value>`. The differences between versions come from extra prompt sections or extra pipeline steps.
+
+| Version | System / prompt difference |
+| --- | --- |
+| `v1` | Uses the base prompt and the full selected record only. The `Relevant evidence` section is empty. |
+| `v2` | Uses the same base prompt, plus the `Relevant evidence` section with selected record-local snippets. |
+| `v3` | Uses the same prompt as `v2`, but adds a correction retry message if a suspicious answer is detected. |
+| `v4` | Uses the `v3` prompt, and retrieves some solved train examples as reasoning-pattern hints. |
+| `v5` | Uses the `v3` prompt, but adds a structured `Calculation plan` JSON instruction. |
+
+More detailed prompt difference between different versions:
+
+**v1 base prompt**
+
+```text
+Answer the user's questions using only the selected ConvFinQA record below. Use the conversation history when it is relevant to the current question. Before giving the final answer, write a lightweight value check with these lines:
+Target:
+Values:
+Operation:
+Then write Final answer: <value>.
+```
+
+**v2 added evidence section**
+
+```text
+Relevant evidence:
+...
+...
+```
+
+**v3 added retry message when verification fails**
+
+```text
+Your previous answer may have a calculation or formatting issue. Please revise the answer for the same question using the same record. If the selected evidence contains a plausible numeric candidate, do not change the answer into a refusal.
+```
+
+**v4 added few-shot reasoning examples**
+
+```text
+Use similar solved train examples only to understand the reasoning pattern. Do not copy their numbers; the current answer must come from the selected record.
+Similar solved examples:
+...
+```
+
+**v5 added structured calculation-plan instruction**
+
+```text
+For this version, also output a machine-readable Calculation plan JSON block before the final answer. Allowed ops are select, add, subtract, multiply, divide, negate, abs, max, and min. The code will execute this JSON locally.
+```
+
+## 2. Version Comparision With Example
+
+### v1 vs v2: Better Evidence Selection
+```text
+Record ID: Single_PNC/2018/page_81.pdf-3
+Turn index: 0
+Question: What was the value of liquid assets?
+Gold executed answer: 22.1
+```
+
+In this example, apart from the full-record (as `v1`), `v2` also add an evidence block in the prompt:
+```text
+Relevant evidence:
+At December 31, 2018, our liquid assets consisted of short-term investments
+totaling $22.1 billion and securities available for sale totaling $63.4 billion.
+```
+
+The result shows `v1` combined two nearby numbers and answered 85.5 (22.1+63.4), while `v2` correctly shows 22.1 as the final answer.
+
+
+### v2 vs v3: Verification Catches Suspicious Selection
+
+```text
+Record ID: Double_ETR/2016/page_424.pdf
+Turn index: 0
+Question: As of December 31, 2016, what was the drawn amount from the credit facility that was set to expire in August 2021?
+Gold executed answer: 4.7
+```
+
+The selected evidence contains two nearby candidates:
+
+```text
+cash borrowings = 0
+letters of credit outstanding = 4.7
+```
+
+In this case, `v2` selected the wrong evidence and produced a wrong answer 0, and `v3` selected the correct evidence and returned 4.7.
+
+### v3 -> v4: Reasoning Examples Help Program-Style Questions
+
+```text
+Record ID: Single_UPS/2017/page_111.pdf-4
+Question sequence:
+- vehicles under capital lease in 2017
+- same value in 2016
+- yearly change
+- percentage change
+```
+
+The table in raw data is embedded after a long pre_text about floating-rate notes and capital lease obligations. The question says “vehicles under capital lease”, but the table label is just vehicles under the section “property, plant and equipment subject to capital leases”. `v3` failed to connect the section title with the table row, and returnd "not enough information". For this case, `v4` retrieved similar solved turns with the similar pattern: select two year-specific values, subtract them, then divide the change by the earlier value for a percentage question. So `v4` returned the correct value: selected `70` and `68`, computed `70 - 68 = 2`, then `2 / 68 = 2.9%`.
+
+### v4 -> v5: Explicit Calculation Plans Helps Local Execution
+
+```text
+Record ID: Single_EMR/2017/page_53.pdf-2
+Turn index: 2
+Question: What is the value of long term debt in 2016 divided by the value of total debt?
+Gold executed answer: 0.61379
+```
+In this example, `v4` used 4051/6.6 = 613.79 as the final answer, which has the denominator in a wrong scale, i.e., the 6.6 means $6.6 billion, but 4051 is in million. In contrast, `v5` used a structure calculation plan which stored the two numbers in the same scale, which helped the model get the correct answer 4051/6600 = 0.61379.
+
+`v5` plan structure:
+
+```json
+{
+  "values": [
+    {"id": "long_term_debt_2016", "value": 4051, "evidence": "..."},
+    {"id": "total_debt_2016", "value": 6600, "evidence": "..."}
+  ],
+  "steps": [
+    {"id": "answer", "op": "divide", "args": ["long_term_debt_2016", "total_debt_2016"]}
+  ],
+  "answer": "answer"
+}
+```
+
+## 3. AI usage in this report: 
+codex
 Use reference in the paper to show the pain point
+Format the table and evaluate the model accuracy
 
 Rewrite this:
 
@@ -217,7 +520,11 @@ also avoided over-engineering because this is a 7-day prototype assignment, and 
 
 A graph representation could be a useful future extension: records, table cells, dialogue turns, extracted values, and calculation steps could be represented as nodes and edges. This may improve table-cell grounding and multi-turn state tracking. However, it was not used in this prototype because the assignment already provides the selected record, and a graph database would add substantial engineering complexity beyond the core modeling challenges targeted in this submission.
 
-## Reference
+
+
+
+
+# Reference
 [1] Chen, Zhiyu, Shiyang Li, Charese Smiley, Zhiqiang Ma, Sameena Shah, and William Yang Wang. "Convfinqa: Exploring the chain of numerical reasoning in conversational finance question answering." In Proceedings of the 2022 conference on empirical methods in natural language processing, pp. 6279-6292. 2022.
 
 [2] OpenAI. (2024, July 18). GPT-4o mini: Advancing cost-efficient intelligence. https://openai.com/index/gpt-4o-mini-advancing-cost-efficient-intelligence/
