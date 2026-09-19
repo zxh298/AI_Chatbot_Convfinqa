@@ -1,5 +1,4 @@
-# ConvFinQA Assignment
-## See REPORT.md for the complete report of this assignment
+# Build a AI chat box using ConvFinQA data as a practice
 ## Get started
 ### Prerequisites
 - Python 3.13.13
